@@ -2,7 +2,7 @@
   "name": "@agent-verifier/core",
   "version": "0.1.0",
   "description": "Private AI Benchmarks with Public Verification via Dual-Circuit Zero-Knowledge Proofs",
-  "license": "MPL-2.0",
+  "license": "Apache-2.0",
   "author": "Riccardo Forzani",
   "type": "module",
   "main": "src/index.js",
