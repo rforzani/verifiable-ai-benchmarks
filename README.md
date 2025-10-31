@@ -54,14 +54,6 @@ This project shows that you don’t actually have to choose. With zero-knowledge
 
 ---
 
-## What we evaluated
-
-We implemented the framework with **Groth16 SNARKs** and used it on AI agent benchmarks from **100 up to 10,000** test cases.  
-Proving time grows with benchmark size; verification stays fast and independent of size.  
-This shows the approach is practical for real agent evaluations, not just toy demos.
-
----
-
 ## Contributions (summary)
 
 1. A **dual-circuit** ZK design for mixed-visibility AI benchmarks (public + hidden) with shared commitments.
@@ -76,7 +68,7 @@ This shows the approach is practical for real agent evaluations, not just toy de
 - ✅ Groth16-based circuits for public/private partitions
 - ✅ Merkle commitments for tests
 - ✅ Log hashing
-- 🟡 More adapters for different agent SDKs
+- 🟡 More adapters for different agent SDKs or a universal Wrapper to be created
 
 ---
 
