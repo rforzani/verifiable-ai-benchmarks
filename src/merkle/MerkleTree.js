@@ -185,7 +185,16 @@ export class MerkleTree {
     // Generate full root
     const fullRoot = this.generateRoot();
 
-    // Extract public tests
+    // Validate and sort public indices to ensure consistent Merkle tree order
+    // Check if indices are already sorted
+    const isSorted = publicIndices.every((val, i, arr) => i === 0 || arr[i - 1] <= val);
+
+    if (!isSorted) {
+      console.warn('⚠️  Public indices not sorted, sorting to ensure consistent Merkle tree');
+      publicIndices = [...publicIndices].sort((a, b) => a - b);
+    }
+
+    // Extract public tests in sorted order
     const publicTests = publicIndices.map(i => this.testSuite[i]);
 
     // Generate subset root

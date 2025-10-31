@@ -34,6 +34,9 @@ export class AgentExecutor {
     // Execution state
     this.executionStartTime = null;
     this.executionEndTime = null;
+
+    // Track created test directories for cleanup
+    this.createdTestDirectories = new Set();
   }
 
   /**
@@ -54,6 +57,7 @@ export class AgentExecutor {
         // Create isolated subdirectory for this test
         testCwd = path.join(testCwd, testId);
         fs.mkdirSync(testCwd, { recursive: true });
+        this.createdTestDirectories.add(testCwd);
       }
 
       // Create execution context for this test
@@ -159,5 +163,30 @@ export class AgentExecutor {
    */
   clearLogs() {
     this.globalLogger.clear();
+  }
+
+  /**
+   * Clean up all created test directories
+   * @returns {Promise<void>}
+   */
+  async cleanupTestDirectories() {
+    for (const dir of this.createdTestDirectories) {
+      try {
+        if (fs.existsSync(dir)) {
+          await fs.promises.rm(dir, { recursive: true, force: true });
+        }
+      } catch (error) {
+        console.warn(`Failed to cleanup test directory ${dir}: ${error.message}`);
+      }
+    }
+    this.createdTestDirectories.clear();
+  }
+
+  /**
+   * Get list of created test directories
+   * @returns {Array<string>} Array of directory paths
+   */
+  getCreatedTestDirectories() {
+    return Array.from(this.createdTestDirectories);
   }
 }

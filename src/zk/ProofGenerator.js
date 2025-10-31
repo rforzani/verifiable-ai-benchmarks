@@ -339,15 +339,19 @@ export class ProofGenerator {
       }
 
       // Pad to maxSubset (circuits expect maxSubset inputs, then pad internally to power of 2)
-      // Use the last valid test for padding (testId must be non-zero)
-      const lastValidIdx = Math.max(0, adjustedSubsetData.testIds.length - 1);
+      // Use deterministic padding to avoid artificial duplicates in Merkle tree
+      const validLength = adjustedSubsetData.testIds.length;
       while (adjustedSubsetData.testIds.length < this.maxSubset) {
-        // Repeat the last valid test data for padding (circuit requires non-zero testIds)
-        adjustedSubsetData.testIds.push(adjustedSubsetData.testIds[lastValidIdx] || BigInt(1));
-        adjustedSubsetData.promptHashes.push(adjustedSubsetData.promptHashes[lastValidIdx] || BigInt(0));
-        adjustedSubsetData.idealOutputHashes.push(adjustedSubsetData.idealOutputHashes[lastValidIdx] || BigInt(0));
-        adjustedSubsetData.agentOutputHashes.push(adjustedSubsetData.agentOutputHashes[lastValidIdx] || BigInt(0));
-        adjustedSubsetData.scores.push(adjustedSubsetData.scores[lastValidIdx] || BigInt(0));
+        // Use deterministic padding based on current index to ensure uniqueness
+        const paddingIdx = adjustedSubsetData.testIds.length;
+
+        // Generate unique padding values: testId = maxTests + paddingIdx (ensures uniqueness)
+        // All other fields use zero padding
+        adjustedSubsetData.testIds.push(BigInt(this.maxTests + paddingIdx));
+        adjustedSubsetData.promptHashes.push(BigInt(0));
+        adjustedSubsetData.idealOutputHashes.push(BigInt(0));
+        adjustedSubsetData.agentOutputHashes.push(BigInt(0));
+        adjustedSubsetData.scores.push(BigInt(0));
       }
 
       // Generate subset proof with adjusted data (NO additional adjustment!)
@@ -849,6 +853,8 @@ export class ProofGenerator {
   /**
    * Adjust integer scores to match target aggregate exactly
    * (Circuit verifies: claimedScore * numTests === sum of scores)
+   *
+   * Uses randomized adjustment order to prevent bias toward specific tests
    */
   adjustScoresToMatchAggregate(intScores, aggregateScore, numTests) {
     // Ensure aggregateScore and numTests are numbers, not BigInt
@@ -859,14 +865,31 @@ export class ProofGenerator {
     let delta = targetSum - currentSum;
 
     if (delta !== 0 && numTestsNum > 0) {
-      for (let i = 0; i < numTestsNum && delta !== 0; i++) {
-        if (delta > 0 && intScores[i] < 100) {
-          intScores[i]++;
+      // Create randomized index array to prevent bias toward first tests
+      const indices = Array.from({ length: numTestsNum }, (_, i) => i);
+
+      // Fisher-Yates shuffle for unbiased randomization
+      for (let i = indices.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [indices[i], indices[j]] = [indices[j], indices[i]];
+      }
+
+      // Adjust scores in randomized order
+      for (let idx of indices) {
+        if (delta === 0) break;
+
+        if (delta > 0 && intScores[idx] < 100) {
+          intScores[idx]++;
           delta--;
-        } else if (delta < 0 && intScores[i] > 0) {
-          intScores[i]--;
+        } else if (delta < 0 && intScores[idx] > 0) {
+          intScores[idx]--;
           delta++;
         }
+      }
+
+      // Log if delta couldn't be fully resolved
+      if (delta !== 0) {
+        console.warn(`⚠️  Score adjustment incomplete: ${Math.abs(delta)} points remaining (all scores at boundaries)`);
       }
     }
   }
