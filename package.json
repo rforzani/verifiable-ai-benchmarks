@@ -1,0 +1,46 @@
+{
+  "name": "@agent-verifier/core",
+  "version": "0.1.0",
+  "description": "Private AI Benchmarks with Public Verification via Dual-Circuit Zero-Knowledge Proofs",
+  "license": "MPL-2.0",
+  "author": "Riccardo Forzani",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "dev": "node index.js",
+    "test": "mocha test/**/*.test.js",
+    "compile:circuits": "node scripts/compile-circuits.js",
+    "setup:ceremony": "node scripts/setup-ceremony.js"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "verification",
+    "zero-knowledge",
+    "zk-snark",
+    "claude",
+    "anthropic",
+    "benchmarking"
+  ],
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.28",
+    "@anthropic-ai/sdk": "^0.30.0",
+    "circomlib": "^2.0.5",
+    "circomlibjs": "^0.1.7",
+    "dotenv": "^17.2.3",
+    "merkletreejs": "^0.4.0",
+    "snarkjs": "^0.7.4",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "chai": "^4.3.10",
+    "circom_tester": "^0.0.24",
+    "mocha": "^10.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
