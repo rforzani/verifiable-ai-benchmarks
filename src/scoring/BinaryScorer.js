@@ -48,13 +48,17 @@ export class BinaryScorer {
   parseResponse(response) {
     const normalized = response.trim().toUpperCase();
 
-    // Check for PASS
-    if (normalized === 'PASS' || normalized.includes('PASS')) {
+    // Use word boundary regex to avoid matching partial words like "PASSPORT" or "FAILURE"
+    const passRegex = /\bPASS\b/;
+    const failRegex = /\bFAIL\b/;
+
+    // Check for PASS (exact match or word boundary match)
+    if (normalized === 'PASS' || passRegex.test(normalized)) {
       return true;
     }
 
-    // Check for FAIL
-    if (normalized === 'FAIL' || normalized.includes('FAIL')) {
+    // Check for FAIL (exact match or word boundary match)
+    if (normalized === 'FAIL' || failRegex.test(normalized)) {
       return false;
     }
 

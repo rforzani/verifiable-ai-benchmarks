@@ -75,7 +75,7 @@ export class Verifier {
     }
 
     // Check score matches
-    const claimedScore = parseInt(proof.publicSignals[1]);
+    const claimedScore = parseInt(proof.publicSignals[1], 10);
     const expectedScore = Math.round(publicInputs.score);
 
     if (claimedScore !== expectedScore) {
@@ -83,7 +83,7 @@ export class Verifier {
     }
 
     // Check numTests matches
-    const claimedNumTests = parseInt(proof.publicSignals[2]);
+    const claimedNumTests = parseInt(proof.publicSignals[2], 10);
     if (claimedNumTests !== publicInputs.numTests) {
       return false;
     }
