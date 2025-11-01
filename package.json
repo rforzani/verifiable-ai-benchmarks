@@ -1,19 +1,27 @@
 {
   "name": "@agent-verifier/core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Private AI Benchmarks with Public Verification via Dual-Circuit Zero-Knowledge Proofs",
   "license": "Apache-2.0",
   "author": "Riccardo Forzani",
   "type": "module",
   "main": "src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./core": "./src/core/index.js",
+    "./providers": "./src/providers/index.js",
+    "./providers/agents": "./src/providers/agents/index.js",
+    "./providers/scorers": "./src/providers/scorers/index.js"
   },
   "scripts": {
-    "dev": "node index.js",
-    "test": "mocha test/**/*.test.js",
+    "test": "mocha test/**/*.test.js --timeout 30000",
+    "test:unit": "mocha test/unit/**/*.test.js",
+    "test:integration": "mocha test/integration/**/*.test.js",
     "compile:circuits": "node scripts/compile-circuits.js",
-    "setup:ceremony": "node scripts/setup-ceremony.js"
+    "setup:ceremony": "node scripts/setup-ceremony.js",
+    "lint": "eslint src/",
+    "format": "prettier --write \"src/**/*.js\"",
+    "validate": "npm run lint && npm test"
   },
   "keywords": [
     "ai",
@@ -21,26 +29,54 @@
     "verification",
     "zero-knowledge",
     "zk-snark",
-    "claude",
+    "benchmarking",
+    "research",
+    "openai",
     "anthropic",
-    "benchmarking"
+    "langchain",
+    "provider-agnostic"
   ],
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.28",
-    "@anthropic-ai/sdk": "^0.30.0",
     "circomlib": "^2.0.5",
     "circomlibjs": "^0.1.7",
     "dotenv": "^17.2.3",
     "merkletreejs": "^0.4.0",
+    "p-limit": "^7.2.0",
     "snarkjs": "^0.7.4",
     "zod": "^3.24.1"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.30",
+    "@anthropic-ai/sdk": "^0.30.1",
+    "langchain": "^0.1.0",
+    "openai": "^4.104.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/claude-agent-sdk": {
+      "optional": true
+    },
+    "@anthropic-ai/sdk": {
+      "optional": true
+    },
+    "openai": {
+      "optional": true
+    },
+    "langchain": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "chai": "^4.3.10",
     "circom_tester": "^0.0.24",
-    "mocha": "^10.2.0"
+    "eslint": "^8.50.0",
+    "mocha": "^10.2.0",
+    "prettier": "^3.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rforzani/agent-verifier"
   }
 }

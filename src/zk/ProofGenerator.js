@@ -342,16 +342,22 @@ export class ProofGenerator {
       // Use deterministic padding to avoid artificial duplicates in Merkle tree
       const validLength = adjustedSubsetData.testIds.length;
       while (adjustedSubsetData.testIds.length < this.maxSubset) {
-        // Use deterministic padding based on current index to ensure uniqueness
-        const paddingIdx = adjustedSubsetData.testIds.length;
-
-        // Generate unique padding values: testId = maxTests + paddingIdx (ensures uniqueness)
-        // All other fields use zero padding
-        adjustedSubsetData.testIds.push(BigInt(this.maxTests + paddingIdx));
-        adjustedSubsetData.promptHashes.push(BigInt(0));
-        adjustedSubsetData.idealOutputHashes.push(BigInt(0));
-        adjustedSubsetData.agentOutputHashes.push(BigInt(0));
-        adjustedSubsetData.scores.push(BigInt(0));
+        const fallbackIndex = validLength > 0 ? validLength - 1 : 0;
+        adjustedSubsetData.testIds.push(
+          validLength > 0 ? adjustedSubsetData.testIds[fallbackIndex] : BigInt(0)
+        );
+        adjustedSubsetData.promptHashes.push(
+          validLength > 0 ? adjustedSubsetData.promptHashes[fallbackIndex] : BigInt(0)
+        );
+        adjustedSubsetData.idealOutputHashes.push(
+          validLength > 0 ? adjustedSubsetData.idealOutputHashes[fallbackIndex] : BigInt(0)
+        );
+        adjustedSubsetData.agentOutputHashes.push(
+          validLength > 0 ? adjustedSubsetData.agentOutputHashes[fallbackIndex] : BigInt(0)
+        );
+        adjustedSubsetData.scores.push(
+          validLength > 0 ? adjustedSubsetData.scores[fallbackIndex] : BigInt(0)
+        );
       }
 
       // Generate subset proof with adjusted data (NO additional adjustment!)
@@ -526,6 +532,29 @@ export class ProofGenerator {
       libraryVersion: BigInt(libraryVersion),
       scoringMethod: BigInt(scoringMethod)
     };
+
+    // Debug: Validate circuit inputs before sending
+    console.log('  🔍 Subset circuit inputs validation:');
+    console.log('    numTests:', circuitInputs.numTests.toString());
+    console.log('    claimedScore:', circuitInputs.claimedScore.toString());
+    console.log('    subsetAggregateScore (raw):', subsetAggregateScore);
+    console.log('    All scores:', adjustedSubsetData.scores.map(s => s.toString()));
+
+    // Manually compute expected sumScores (circuit logic: sum only first numTests scores)
+    let expectedSum = 0;
+    for (let i = 0; i < Number(circuitInputs.numTests) && i < adjustedSubsetData.scores.length; i++) {
+      expectedSum += Number(adjustedSubsetData.scores[i]);
+    }
+    const expectedProduct = Number(circuitInputs.claimedScore) * Number(circuitInputs.numTests);
+    console.log('    Expected sumScores (first', circuitInputs.numTests.toString(), 'scores):', expectedSum);
+    console.log('    Expected product (claimedScore * numTests):', expectedProduct);
+    console.log('    Match:', expectedSum === expectedProduct ? '✓' : '✗ MISMATCH!');
+
+    if (expectedSum !== expectedProduct) {
+      console.error('    ⚠️  Circuit assertion will fail!');
+      console.error('    This means: subsetAggregateScore * numTests !== sum of actual scores');
+      console.error('    Either the aggregate score calculation is wrong, or the score data is inconsistent');
+    }
 
     // Generate witness and proof
     const { proof, publicSignals } = await snarkjs.groth16.fullProve(
@@ -744,7 +773,16 @@ export class ProofGenerator {
 
     // Adjust scores to match aggregate exactly
     const intScores = scores.map(s => Number(s));
-    this.adjustScoresToMatchAggregate(intScores, aggregateScore, numTests);
+    const sanitizedSubsetIndices = (publicIndices || [])
+      .map(idx => Number(idx))
+      .filter(idx => Number.isInteger(idx) && idx >= 0 && idx < Number(numTests));
+
+    if (Array.isArray(publicIndices) && sanitizedSubsetIndices.length !== publicIndices.length) {
+      console.warn('⚠️  Some public subset indices were out of bounds during score adjustment');
+    }
+
+    this.adjustSubsetScoresToMatchAggregate(intScores, sanitizedSubsetIndices, subsetAggregateScore);
+    this.adjustScoresToMatchAggregate(intScores, aggregateScore, numTests, { lockedIndices: new Set(sanitizedSubsetIndices) });
 
     // Compute leaf hashes for all tests
     const leafHashes = [];
@@ -856,42 +894,95 @@ export class ProofGenerator {
    *
    * Uses randomized adjustment order to prevent bias toward specific tests
    */
-  adjustScoresToMatchAggregate(intScores, aggregateScore, numTests) {
-    // Ensure aggregateScore and numTests are numbers, not BigInt
+  adjustScoresToMatchAggregate(intScores, aggregateScore, numTests, options = {}) {
     const claimed = Math.round(Number(aggregateScore));
     const numTestsNum = Number(numTests);
+
+    if (!Number.isFinite(claimed) || !Number.isFinite(numTestsNum) || numTestsNum <= 0) {
+      return;
+    }
+
+    const { lockedIndices = [], startIndex = 0 } = options;
+    const lockedSet = new Set();
+
+    if (lockedIndices instanceof Set) {
+      for (const idx of lockedIndices) {
+        lockedSet.add(Number(idx));
+      }
+    } else if (Array.isArray(lockedIndices)) {
+      for (const idx of lockedIndices) {
+        lockedSet.add(Number(idx));
+      }
+    } else if (Number.isInteger(lockedIndices)) {
+      lockedSet.add(Number(lockedIndices));
+    }
+
+    const indices = [];
+    for (let i = 0; i < numTestsNum; i++) {
+      indices.push(startIndex + i);
+    }
+
+    let currentSum = 0;
+    for (const idx of indices) {
+      const value = intScores[idx];
+      currentSum += Number.isFinite(value) ? value : 0;
+    }
+
     const targetSum = claimed * numTestsNum;
-    let currentSum = intScores.slice(0, numTestsNum).reduce((a, b) => a + b, 0);
     let delta = targetSum - currentSum;
 
-    if (delta !== 0 && numTestsNum > 0) {
-      // Create randomized index array to prevent bias toward first tests
-      const indices = Array.from({ length: numTestsNum }, (_, i) => i);
+    if (delta === 0) {
+      return;
+    }
 
-      // Fisher-Yates shuffle for unbiased randomization
-      for (let i = indices.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [indices[i], indices[j]] = [indices[j], indices[i]];
-      }
+    let adjustableIndices = indices.filter(idx => !lockedSet.has(idx));
+    if (adjustableIndices.length === 0) {
+      adjustableIndices = indices.slice();
+    }
 
-      // Adjust scores in randomized order
-      for (let idx of indices) {
-        if (delta === 0) break;
+    for (let i = adjustableIndices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [adjustableIndices[i], adjustableIndices[j]] = [adjustableIndices[j], adjustableIndices[i]];
+    }
 
-        if (delta > 0 && intScores[idx] < 100) {
-          intScores[idx]++;
-          delta--;
-        } else if (delta < 0 && intScores[idx] > 0) {
-          intScores[idx]--;
-          delta++;
-        }
-      }
+    for (const idx of adjustableIndices) {
+      if (delta === 0) break;
 
-      // Log if delta couldn't be fully resolved
-      if (delta !== 0) {
-        console.warn(`⚠️  Score adjustment incomplete: ${Math.abs(delta)} points remaining (all scores at boundaries)`);
+      const current = intScores[idx] ?? 0;
+
+      if (delta > 0 && current < 100) {
+        intScores[idx] = current + 1;
+        delta--;
+      } else if (delta < 0 && current > 0) {
+        intScores[idx] = current - 1;
+        delta++;
       }
     }
+
+    if (delta !== 0) {
+      console.warn(`⚠️  Score adjustment incomplete: ${Math.abs(delta)} points remaining (all scores at boundaries or locked)`);
+    }
+  }
+
+  adjustSubsetScoresToMatchAggregate(intScores, subsetIndices, subsetAggregateScore) {
+    if (!Array.isArray(subsetIndices) || subsetIndices.length === 0) {
+      return;
+    }
+
+    const validIndices = subsetIndices
+      .map(idx => Number(idx))
+      .filter(idx => Number.isInteger(idx) && idx >= 0 && idx < intScores.length);
+
+    if (validIndices.length === 0) {
+      return;
+    }
+
+    const subsetScores = validIndices.map(idx => intScores[idx]);
+    this.adjustScoresToMatchAggregate(subsetScores, subsetAggregateScore, validIndices.length);
+
+    validIndices.forEach((idx, i) => {
+      intScores[idx] = subsetScores[i];
+    });
   }
 
   async computeSubsetMerkleRootFromData(adjustedSubsetData) {
