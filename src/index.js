@@ -28,7 +28,8 @@ export {
   OpenAIProvider,
   CustomProvider,
   AIScorer,
-  DeterministicScorer
+  DeterministicScorer,
+  HumanEvalScorer
 } from './providers/index.js';
 
 // Utilities (for advanced use cases)

@@ -1,4 +1,4 @@
-import { sha256Hex } from '../utils/crypto.js';
+import { deterministicStringify, sha256Hex } from '../utils/crypto.js';
 
 /**
  * Execution Logger
@@ -15,16 +15,19 @@ export class ExecutionLogger {
     this.sequenceNumber = 0;
   }
 
+  _ensureBucket(testId) {
+    if (!this.testLogs.has(testId)) {
+      this.testLogs.set(testId, []);
+    }
+  }
+
   /**
    * Set the current test being executed
    * @param {string} testId - Test case ID
    */
   setCurrentTest(testId) {
     this.currentTestId = testId;
-
-    if (!this.testLogs.has(testId)) {
-      this.testLogs.set(testId, []);
-    }
+    this._ensureBucket(testId);
   }
 
   /**
@@ -35,13 +38,21 @@ export class ExecutionLogger {
    * @param {any} params.toolOutput - Tool output/result
    * @param {string} params.toolUseId - SDK tool use ID
    */
-  logToolCall({ toolName, toolInput, toolOutput, toolUseId }) {
+  logToolCall({ toolName, toolInput, toolOutput, toolUseId, metadata = {} }) {
+    const testId = this.currentTestId || metadata.testId;
+    if (!testId) {
+      throw new Error('ExecutionLogger.logToolCall requires a testId. Call setCurrentTest() first.');
+    }
+
+    this._ensureBucket(testId);
+
     const logEntry = {
-      testId: this.currentTestId,
-      toolUseId,
+      testId,
+      toolUseId: toolUseId || null,
       toolName,
       toolInput: this.sanitizeData(toolInput),
       toolOutput: this.sanitizeData(toolOutput),
+      metadata: this.sanitizeData(metadata),
       timestamp: Date.now(),
       sequenceNumber: this.sequenceNumber++
     };
@@ -49,8 +60,38 @@ export class ExecutionLogger {
     this.logs.push(logEntry);
 
     // Also add to test-specific logs
-    if (this.currentTestId) {
-      this.testLogs.get(this.currentTestId).push(logEntry);
+    this.testLogs.get(testId).push(logEntry);
+  }
+
+  /**
+   * Ingest logs captured by ExecutionContext for a specific test.
+   * @param {string} testId
+   * @param {Array<object>} contextLogs
+   */
+  recordTestLogs(testId, contextLogs = []) {
+    if (!testId || !Array.isArray(contextLogs) || contextLogs.length === 0) {
+      return;
+    }
+
+    this._ensureBucket(testId);
+
+    for (const contextLog of contextLogs) {
+      const isToolLog = Boolean(contextLog.toolName);
+      const entry = {
+        testId,
+        toolUseId: contextLog.toolUseId || null,
+        toolName: contextLog.toolName || null,
+        eventType: contextLog.eventType || null,
+        toolInput: this.sanitizeData(contextLog.toolInput ?? contextLog.data ?? null),
+        toolOutput: this.sanitizeData(contextLog.toolOutput ?? null),
+        metadata: this.sanitizeData(contextLog.metadata ?? {}),
+        timestamp: contextLog.timestamp ?? Date.now(),
+        sequenceNumber: this.sequenceNumber++,
+        kind: isToolLog ? 'tool' : 'event'
+      };
+
+      this.logs.push(entry);
+      this.testLogs.get(testId).push(entry);
     }
   }
 
@@ -60,6 +101,10 @@ export class ExecutionLogger {
    * @returns {any} Sanitized data
    */
   sanitizeData(data) {
+    if (typeof data === 'bigint') {
+      return data.toString();
+    }
+
     if (data === null || data === undefined) {
       return data;
     }
@@ -74,8 +119,16 @@ export class ExecutionLogger {
 
     // Remove non-deterministic fields
     const sanitized = { ...data };
-    delete sanitized.uuid;
-    delete sanitized.session_id;
+    for (const key of Object.keys(sanitized)) {
+      if (this._isVolatileKey(key)) {
+        delete sanitized[key];
+        continue;
+      }
+
+      if (typeof sanitized[key] === 'bigint') {
+        sanitized[key] = sanitized[key].toString();
+      }
+    }
 
     // Recursively sanitize nested objects
     for (const key in sanitized) {
@@ -122,21 +175,11 @@ export class ExecutionLogger {
   }
 
   /**
-   * Compute hash of all logs (for ZK circuit)
-   * @returns {string} Hex string hash of logs
+   * Build sanitized commitment transcript for hashing.
+   * @returns {Array<object>}
    */
-  computeLogsHash() {
-    // Create deterministic log representation
-    const logsData = this.logs.map(log => ({
-      testId: log.testId,
-      toolName: log.toolName,
-      toolInput: log.toolInput,
-      toolOutput: log.toolOutput,
-      sequenceNumber: log.sequenceNumber
-      // Note: timestamp and toolUseId are NOT included for determinism
-    }));
-
-    return sha256Hex(JSON.stringify(logsData));
+  getSanitizedLogs() {
+    return this.logs.map(log => this._createSanitizedEntry(log));
   }
 
   /**
@@ -144,17 +187,20 @@ export class ExecutionLogger {
    * @param {string} testId - Test case ID
    * @returns {string} Hex string hash
    */
+  computeLogsHash() {
+    return sha256Hex(deterministicStringify(this.getSanitizedLogs()));
+  }
+
+  /**
+   * Compute hash of all logs (for ZK circuit)
+   * @returns {string} Hex string hash of logs
+   */
   computeTestLogsHash(testId) {
     const testLogs = this.getLogsForTest(testId);
 
-    const logsData = testLogs.map(log => ({
-      toolName: log.toolName,
-      toolInput: log.toolInput,
-      toolOutput: log.toolOutput,
-      sequenceNumber: log.sequenceNumber
-    }));
+    const logsData = testLogs.map(log => this._createSanitizedEntry(log));
 
-    return sha256Hex(JSON.stringify(logsData));
+    return sha256Hex(deterministicStringify(logsData));
   }
 
   /**
@@ -168,7 +214,8 @@ export class ExecutionLogger {
       const toolCounts = {};
 
       for (const log of logs) {
-        toolCounts[log.toolName] = (toolCounts[log.toolName] || 0) + 1;
+        const label = log.toolName || log.eventType || log.kind || 'log';
+        toolCounts[label] = (toolCounts[label] || 0) + 1;
       }
 
       testSummaries.push({
@@ -206,5 +253,52 @@ export class ExecutionLogger {
       logs: this.logs,
       summary: this.getSummary()
     }, null, 2);
+  }
+
+  /**
+   * Determine if a key should be excluded from commitments.
+   * @param {string} key
+   * @returns {boolean}
+   * @private
+   */
+  _isVolatileKey(key) {
+    if (!key) return false;
+    const lower = String(key).toLowerCase();
+    if (['uuid', 'session_id', 'sessionid', 'tooluseid', 'idempotencykey'].includes(lower)) {
+      return true;
+    }
+    if (
+      lower.includes('token') ||
+      lower.includes('timestamp') ||
+      lower.includes('latency') ||
+      lower.includes('duration')
+    ) {
+      return true;
+    }
+    if (lower === 'traceid' || lower === 'trace_id') {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Convert a raw log entry into the canonical commitment-friendly structure.
+   * @param {object} log
+   * @returns {object}
+   * @private
+   */
+  _createSanitizedEntry(log) {
+    const base = {
+      testId: log.testId,
+      sequenceNumber: log.sequenceNumber,
+      kind: log.kind || (log.toolName ? 'tool' : (log.eventType ? 'event' : 'log')),
+      name: log.toolName || log.eventType || null,
+      input: this.sanitizeData(log.toolInput ?? null),
+      output: this.sanitizeData(log.toolOutput ?? null),
+      data: this.sanitizeData(log.data ?? null),
+      metadata: this.sanitizeData(log.metadata ?? {})
+    };
+
+    return base;
   }
 }

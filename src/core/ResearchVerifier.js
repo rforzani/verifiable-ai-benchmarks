@@ -1,4 +1,3 @@
-import { MerkleTree } from '../merkle/MerkleTree.js';
 import { TestSelector } from '../selection/TestSelector.js';
 import { ProofGenerator } from '../zk/ProofGenerator.js';
 import { Verifier } from '../zk/Verifier.js';
@@ -75,7 +74,6 @@ export class ResearchVerifier {
     };
 
     // Initialize subsystems
-    this.merkleTree = new MerkleTree(this.testSuite);
     this.proofGenerator = new ProofGenerator({
       ...this.zkConfig,
       libraryVersion: '1.0.0'
@@ -115,38 +113,37 @@ export class ResearchVerifier {
 
     try {
       // Step 1: Select public subset
-      console.log('[1/6] Selecting public subset (5%, deterministic)...');
+      console.log('[1/5] Selecting public subset (5%, deterministic)...');
       const selector = new TestSelector(this.testSuite, this.selectionConfig);
       const selection = selector.select();
       console.log(`✓ Selected ${selection.publicCount} public tests (${selection.publicPercentage}%)\n`);
 
-      // Step 2: Generate dual Merkle trees
-      console.log('[2/6] Generating dual Merkle trees...');
-      const dualRoots = this.merkleTree.generateDualRoots(selection.publicIndices);
-      this.merkleRoot = dualRoots.fullRoot;
-      this.subsetMerkleRoot = dualRoots.subsetRoot;
-      console.log(`✓ Full Merkle root: ${this.merkleRoot}`);
-      console.log(`✓ Subset Merkle root: ${this.subsetMerkleRoot}\n`);
-
-      // Step 3: Execute agent on all tests
-      console.log('[3/6] Executing agent on all tests...');
+      // Step 2: Execute agent on all tests
+      console.log('[2/5] Executing agent on all tests...');
       await this._executeTests();
       console.log(`✓ Completed ${this.testResults.length} tests\n`);
 
-      // Step 4: Compute aggregate scores
-      console.log('[4/6] Computing aggregate scores...');
-      const aggregateScore = this._computeAggregateScore();
-      const subsetAggregateScore = this._computeSubsetAggregateScore(selection.publicIndices);
-      console.log(`✓ Full dataset score: ${aggregateScore.toFixed(2)}`);
-      console.log(`✓ Public subset score: ${subsetAggregateScore.toFixed(2)}\n`);
+      // Step 3: Compute aggregate scores
+      console.log('[3/5] Computing aggregate scores...');
+      const overallMetrics = this._computeScoreMetrics(this.testResults);
+      const subsetResults = selection.publicIndices.map(idx => this.testResults[idx]);
+      const subsetMetrics = this._computeScoreMetrics(subsetResults);
+      console.log(`✓ Full dataset score: ${overallMetrics.average.toFixed(2)}`);
+      console.log(`✓ Public subset score: ${subsetMetrics.average.toFixed(2)}\n`);
 
-      // Step 5: Generate dual ZK proofs
-      console.log('[5/6] Generating dual zero-knowledge proofs...');
-      const dualProof = await this._generateDualProof(selection, subsetAggregateScore);
+      // Step 4: Generate dual ZK proofs and Merkle commitments
+      console.log('[4/5] Generating dual zero-knowledge proofs...');
+      const dualProof = await this._generateDualProof(selection, overallMetrics.sum, subsetMetrics.sum);
       console.log(`✓ Dual ZK proofs generated\n`);
 
-      // Step 6: Prepare public transparency data
-      console.log('[6/6] Preparing public transparency data...');
+      // Persist Merkle commitments derived during proof generation
+      this.merkleRoot = dualProof.commitments.fullMerkleRoot;
+      this.subsetMerkleRoot = dualProof.commitments.subsetMerkleRoot;
+      console.log(`✓ Full Merkle root: ${this.merkleRoot}`);
+      console.log(`✓ Subset Merkle root: ${this.subsetMerkleRoot}\n`);
+
+      // Step 5: Prepare public transparency data
+      console.log('[5/5] Preparing public transparency data...');
       const publicData = this._preparePublicData(selection);
       console.log(`✓ Public data prepared\n`);
 
@@ -157,7 +154,8 @@ export class ResearchVerifier {
         // Full dataset (zero-knowledge)
         full: {
           merkleRoot: this.merkleRoot,
-          score: aggregateScore,
+          score: overallMetrics.average,
+          totalScore: overallMetrics.sum,
           numTests: this.testSuite.length,
           executionTime: this.executionEndTime - this.executionStartTime
         },
@@ -165,7 +163,8 @@ export class ResearchVerifier {
         // Public subset (transparent)
         subset: {
           merkleRoot: this.subsetMerkleRoot,
-          score: subsetAggregateScore,
+          score: subsetMetrics.average,
+          totalScore: subsetMetrics.sum,
           numTests: selection.publicCount,
           publicIndices: selection.publicIndices,
           publicData: publicData
@@ -191,16 +190,21 @@ export class ResearchVerifier {
           timestamp: new Date().toISOString(),
           libraryVersion: '1.0.0',
           testSuiteSize: this.testSuite.length,
-          publicPercentage: selection.publicPercentage
+          publicPercentage: selection.publicPercentage,
+          totalScoreSum: overallMetrics.sum,
+          subsetScoreSum: subsetMetrics.sum
         }
       };
 
-      // Save proof package
+      // Save proof package (public data)
       await this._saveProofPackage(result);
 
+      // Save execution logs (private, for debugging/verification)
+      await this._saveExecutionLogs();
+
       console.log(`\n✅ Verification complete!`);
-      console.log(`   Full dataset score: ${aggregateScore.toFixed(2)}`);
-      console.log(`   Public subset score: ${subsetAggregateScore.toFixed(2)}`);
+      console.log(`   Full dataset score: ${overallMetrics.average.toFixed(2)}`);
+      console.log(`   Public subset score: ${subsetMetrics.average.toFixed(2)}`);
       console.log(`   Execution time: ${(result.full.executionTime / 1000).toFixed(2)}s\n`);
 
       return result;
@@ -294,6 +298,7 @@ export class ResearchVerifier {
     try {
       // Create execution context
       const context = new ExecutionContext(test.id);
+      this.executionLogger.setCurrentTest(test.id);
 
       // Execute agent
       const agentOutput = await this.agentProvider.execute(test.prompt, context);
@@ -304,8 +309,15 @@ export class ResearchVerifier {
         idealOutput: test.idealOutput,
         scoringType: test.scoringType,
         criteria: test.scoringCriteria,
-        metadata: { testId: test.id }
+        metadata: {
+          testId: test.id,
+          ...(test.metadata || {})
+        }
       });
+
+      // Persist logs for execution commitment
+      const contextLogs = context.getLogs();
+      this.executionLogger.recordTestLogs(test.id, contextLogs);
 
       // Return result
       return {
@@ -316,7 +328,7 @@ export class ResearchVerifier {
         score,
         scoringType: test.scoringType,
         success: test.scoringType === 'binary' ? score === true : score >= 50,
-        logs: context.getLogs(),
+        logs: contextLogs,
         duration: context.getMetadata().duration
       };
 
@@ -337,55 +349,55 @@ export class ResearchVerifier {
    * Compute aggregate score for full dataset
    * @private
    */
-  _computeAggregateScore() {
-    if (this.testResults.length === 0) return 0;
-
-    let totalScore = 0;
-    for (const result of this.testResults) {
-      if (result.scoringType === 'binary') {
-        totalScore += result.score ? 100 : 0;
-      } else {
-        totalScore += result.score;
-      }
+  _normalizeScore(result) {
+    if (!result) {
+      return 0;
     }
 
-    return totalScore / this.testResults.length;
+    if (result.scoringType === 'binary') {
+      return result.score ? 100 : 0;
+    }
+
+    const numeric = Number(result.score);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+
+    const rounded = Math.round(numeric);
+    if (rounded < 0) return 0;
+    if (rounded > 100) return 100;
+    return rounded;
   }
 
-  /**
-   * Compute aggregate score for public subset
-   * @private
-   */
-  _computeSubsetAggregateScore(publicIndices) {
-    if (publicIndices.length === 0) return 0;
-
-    let totalScore = 0;
-    for (const idx of publicIndices) {
-      const result = this.testResults[idx];
-      if (result.scoringType === 'binary') {
-        totalScore += result.score ? 100 : 0;
-      } else {
-        totalScore += result.score;
-      }
+  _computeScoreMetrics(results) {
+    if (!Array.isArray(results) || results.length === 0) {
+      return { sum: 0, average: 0 };
     }
 
-    return totalScore / publicIndices.length;
+    let total = 0;
+    for (const result of results) {
+      total += this._normalizeScore(result);
+    }
+
+    return {
+      sum: total,
+      average: total / results.length
+    };
   }
 
   /**
    * Generate dual ZK proofs
    * @private
    */
-  async _generateDualProof(selection, subsetAggregateScore) {
+  async _generateDualProof(selection, aggregateScoreSum, subsetScoreSum) {
     const publicResults = selection.publicIndices.map(idx => this.testResults[idx]);
 
     try {
       return await this.proofGenerator.generateDualProof({
         testResults: this.testResults,
-        merkleRoot: this.merkleRoot,
-        aggregateScore: this._computeAggregateScore(),
+        aggregateScore: aggregateScoreSum,
         numTests: this.testSuite.length,
-        executionLogs: this.executionLogger.getAllLogs(),
+        executionLogs: this.executionLogger.getSanitizedLogs(),
         scoringCriteria: this.testSuite.map(test => ({
           testId: test.id,
           scoringType: test.scoringType,
@@ -394,7 +406,7 @@ export class ResearchVerifier {
         publicIndices: selection.publicIndices,
         publicResults: publicResults,
         subsetMerkleRoot: this.subsetMerkleRoot,
-        subsetAggregateScore: subsetAggregateScore
+        subsetAggregateScore: subsetScoreSum
       });
 
     } catch (error) {
@@ -427,7 +439,7 @@ export class ResearchVerifier {
   }
 
   /**
-   * Save proof package to disk
+   * Save proof package to disk (public shareable data)
    * @private
    */
   async _saveProofPackage(result) {
@@ -445,6 +457,79 @@ export class ResearchVerifier {
     );
 
     console.log(`📦 Proof package saved: ${filepath}`);
+  }
+
+  /**
+   * Save execution logs to separate file (private, for debugging)
+   * Logs are committed to in the proof but stored separately for privacy
+   * @private
+   */
+  async _saveExecutionLogs() {
+    // Ensure output directory exists
+    await fs.promises.mkdir(this.outputDir, { recursive: true });
+
+    const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '');
+    const filename = `execution-logs-${timestamp}.json`;
+    const filepath = path.join(this.outputDir, filename);
+
+    // Get all logs from execution logger
+    const allLogs = this.executionLogger.getAllLogs();
+    const sanitizedLogs = this.executionLogger.getSanitizedLogs();
+    const sanitizedHashHex = this.executionLogger.computeLogsHash();
+
+    // Create structured log output
+    const logOutput = {
+      metadata: {
+        timestamp: new Date().toISOString(),
+        testSuiteSize: this.testSuite.length,
+        totalLogs: allLogs.length,
+        libraryVersion: '1.0.0',
+        sanitizedCommitmentHash: sanitizedHashHex
+      },
+
+      // Group logs by test ID for easier navigation
+      logsByTest: this._groupLogsByTest(allLogs),
+
+      // Full chronological log
+      allLogs: allLogs,
+
+      // Sanitized transcript used for commitments (optional disclosure)
+      sanitizedLogs,
+
+      // Summary statistics
+      summary: {
+        totalToolCalls: allLogs.length,
+        uniqueTools: [...new Set(allLogs.map(log => log.toolName || log.eventType || 'log'))],
+        testsCovered: [...new Set(allLogs.map(log => log.testId))].length,
+        averageLogsPerTest: allLogs.length / this.testSuite.length
+      }
+    };
+
+    await fs.promises.writeFile(
+      filepath,
+      JSON.stringify(logOutput, null, 2),
+      'utf8'
+    );
+
+    console.log(`📋 Execution logs saved: ${filepath}`);
+    console.log(`   Total tool calls logged: ${allLogs.length}`);
+  }
+
+  /**
+   * Group logs by test ID for easier debugging
+   * @private
+   */
+  _groupLogsByTest(logs) {
+    const grouped = {};
+
+    for (const log of logs) {
+      if (!grouped[log.testId]) {
+        grouped[log.testId] = [];
+      }
+      grouped[log.testId].push(log);
+    }
+
+    return grouped;
   }
 
   /**

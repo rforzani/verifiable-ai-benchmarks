@@ -53,8 +53,8 @@ async function compileCircuits() {
     console.log('    - verifier.wasm (witness generator)');
     console.log('    - verifier.sym (symbol table)');
 
-    // Compile subset verifier circuit (public 5%-10%)
-    console.log('\n[3/5] Compiling subset verifier circuit (public 10%)...');
+    // Compile subset verifier circuit (public 5%)
+    console.log('\n[3/5] Compiling subset verifier circuit (public 5%)...');
     const subsetCircuitPath = path.join(circuitsDir, 'verifier-subset.circom');
 
     const subsetCompileCmd = `circom ${subsetCircuitPath} --r1cs --wasm --sym -o ${outputDir}`;

@@ -6,3 +6,4 @@
 
 export { AIScorer } from './AIScorer.js';
 export { DeterministicScorer } from './DeterministicScorer.js';
+export { HumanEvalScorer } from './HumanEvalScorer.js';

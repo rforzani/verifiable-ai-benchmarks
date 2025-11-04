@@ -17,9 +17,9 @@ async function performTrustedSetup() {
   const subsetR1csPath = path.join(circuitsDir, 'verifier-subset.r1cs');
 
   // Shared Powers of Tau (can be reused across both circuits)
-  // Power 20 supports up to 2^20 = 1,048,576 constraints (our main circuit has ~637k)
-  const ptauRawPath = path.join(circuitsDir, 'powersOfTau28_hez_20.ptau');
-  const ptauPath = path.join(circuitsDir, 'powersOfTau28_hez_final_20.ptau');
+  // Power 24 supports up to 2^24 = 16,777,216 constraints (our main circuit has ~6.4M)
+  const ptauRawPath = path.join(circuitsDir, 'powersOfTau28_hez_24.ptau');
+  const ptauPath = path.join(circuitsDir, 'powersOfTau28_hez_final_24.ptau');
 
   // Main circuit keys
   const mainZkeyIntermediatePath = path.join(circuitsDir, 'verifier_0001.zkey');
@@ -53,7 +53,7 @@ async function performTrustedSetup() {
 
       // Build curve and create a raw ptau (Phase 1)
       const curve = await snarkjs.curves.getCurveFromName('BN128');
-      const power = 20; // 2^20 = 1,048,576 constraints (main circuit has ~637k)
+      const power = 24; // 2^24 = 16,777,216 constraints (main circuit has ~6.4M)
       await snarkjs.powersOfTau.newAccumulator(curve, power, ptauRawPath, console);
 
       // Prepare Phase 2 (required for groth16 setup)
@@ -146,11 +146,11 @@ async function performTrustedSetup() {
     console.log('    - verification_key_subset.json (verification key)');
     console.log('\nCircuit capabilities:');
     console.log('  Main Circuit:');
-    console.log('    - Up to 100 tests (full dataset)');
+    console.log('    - Up to 1000 tests (full dataset)');
     console.log('    - Dual-proof verification with subset linking');
     console.log('    - Enhanced commitments (logs, library version, scoring)');
     console.log('  Subset Circuit:');
-    console.log('    - Up to 10 public tests (10% subset)');
+    console.log('    - Up to 50 public tests (5% subset)');
     console.log('    - Simple public verification (no commitments needed)');
     console.log('  Both:');
     console.log('    - Score range: 0-100');

@@ -2,7 +2,15 @@ import * as snarkjs from 'snarkjs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import crypto from 'crypto';
+import {
+  getPoseidon,
+  identifierToField,
+  poseidonHash,
+  poseidonLeaf,
+  sha256Field,
+  toFieldElement
+} from '../utils/poseidon.js';
+import { deterministicStringify, sha256Hex } from '../utils/crypto.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,56 +52,133 @@ export class ProofGenerator {
       path.join(projectRoot, 'circuits/verification_key_subset.json');
 
     // Circuit parameters (must match compiled circuits)
-    this.maxTests = config.maxTests || 100;
-    this.maxSubset = config.maxSubset || 10;
+    this.maxTests = config.maxTests || 1000;
+    this.maxSubset = config.maxSubset || 50;
     this.merkleTreeDepth = config.merkleTreeDepth || 10;
+    if (config.subsetTreeDepth && config.subsetTreeCapacity) {
+      this.subsetTreeDepth = config.subsetTreeDepth;
+      this.subsetTreeCapacity = config.subsetTreeCapacity;
+    } else {
+      let depth = 0;
+      let capacity = 1;
+      while (capacity < this.maxSubset) {
+        capacity <<= 1;
+        depth += 1;
+      }
+      this.subsetTreeDepth = depth;
+      this.subsetTreeCapacity = capacity;
+    }
     this.libraryVersion = config.libraryVersion || '1.0.0';
-
-    // Lazy-loaded Poseidon hasher
-    this._poseidon = null;
+    this._cachedLibraryHash = null;
   }
 
-  /**
-   * Get or initialize Poseidon hasher
-   * NOTE: Requires circomlibjs to be installed
-   */
-  async getPoseidon() {
-    if (this._poseidon) return this._poseidon;
+  async computeMethodologyCommitments({ executionLogs, scoringCriteria }) {
+    const executionLogsHash = this.computeExecutionLogsHash(executionLogs);
+    const scoringMethodHash = this.computeScoringMethodHash(scoringCriteria);
+    const libraryCodeHash = await this.computeLibraryCodeHash();
 
-    try {
-      // Try to load circomlibjs
-      const { buildPoseidon } = await import('circomlibjs');
-      this._poseidon = await buildPoseidon();
-      return this._poseidon;
-    } catch (error) {
-      console.warn('⚠️  circomlibjs not found, using SHA256 fallback');
-      console.warn('   Install it with: npm install circomlibjs');
-      console.warn('   Proofs will use placeholder mode');
-      return null;
+    return {
+      executionLogsHash,
+      scoringMethodHash,
+      libraryCodeHash
+    };
+  }
+
+  computeExecutionLogsHash(executionLogs) {
+    return sha256Field(deterministicStringify(executionLogs || [])).toString();
+  }
+
+  computeScoringMethodHash(scoringCriteria) {
+    return sha256Field(deterministicStringify(scoringCriteria || [])).toString();
+  }
+
+  async computeLibraryCodeHash() {
+    if (this._cachedLibraryHash) {
+      return this._cachedLibraryHash;
+    }
+
+    const manifest = await this._buildLibraryManifest();
+    const manifestPayload = deterministicStringify(manifest);
+    const libraryHash = sha256Field(manifestPayload).toString();
+
+    this._cachedLibraryHash = libraryHash;
+    return libraryHash;
+  }
+
+  async _buildLibraryManifest() {
+    const projectRoot = path.join(__dirname, '../..');
+    const includeDirs = ['src'];
+    const includeFiles = ['package.json', 'package-lock.json'];
+    const files = [];
+
+    for (const dir of includeDirs) {
+      const absDir = path.join(projectRoot, dir);
+      await this._collectFiles(absDir, files);
+    }
+
+    for (const rel of includeFiles) {
+      const absPath = path.join(projectRoot, rel);
+      if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
+        files.push(absPath);
+      }
+    }
+
+    files.sort();
+
+    const manifest = [];
+    for (const absPath of files) {
+      const content = await fs.promises.readFile(absPath);
+      manifest.push({
+        path: path.relative(projectRoot, absPath).replace(/\\/g, '/'),
+        hash: sha256Hex(content)
+      });
+    }
+
+    return manifest;
+  }
+
+  async _collectFiles(currentPath, accumulator) {
+    if (!fs.existsSync(currentPath)) {
+      return;
+    }
+
+    const stats = await fs.promises.stat(currentPath);
+    if (stats.isDirectory()) {
+      const entries = await fs.promises.readdir(currentPath);
+      for (const entry of entries) {
+        if (this._shouldExclude(entry)) {
+          continue;
+        }
+        await this._collectFiles(path.join(currentPath, entry), accumulator);
+      }
+    } else if (stats.isFile()) {
+      accumulator.push(currentPath);
     }
   }
 
-  /**
-   * Hash a string to a field element using Poseidon
-   * If Poseidon not available, use SHA256 and convert to BigInt
-   */
+  _shouldExclude(entryName) {
+    const excluded = new Set([
+      'node_modules',
+      'dist',
+      'build',
+      '.git',
+      '.cache',
+      '.idea',
+      '.vscode',
+      '__pycache__',
+      '.DS_Store'
+    ]);
+    if (excluded.has(entryName)) {
+      return true;
+    }
+    if (entryName.startsWith('.')) {
+      return true;
+    }
+    return false;
+  }
+
   async hashString(str) {
-    const poseidon = await this.getPoseidon();
-
-    // First, hash the string with SHA256 to get a fixed-size value
-    const sha256Hash = crypto.createHash('sha256').update(str).digest();
-
-    // Convert to BigInt (take first 31 bytes to fit in BN254 field)
-    const hashBigInt = BigInt('0x' + sha256Hash.slice(0, 31).toString('hex'));
-
-    if (poseidon) {
-      // Hash again with Poseidon for circuit compatibility
-      const F = poseidon.F;
-      const poseidonHash = poseidon([hashBigInt]);
-      return F.toObject(poseidonHash).toString();
-    }
-
-    return hashBigInt.toString();
+    return sha256Field(str ?? '').toString();
   }
 
   /**
@@ -101,27 +186,14 @@ export class ProofGenerator {
    * Matches TestCaseLeafHash template in circuits
    */
   async computeTestCaseLeafHash({ testId, promptHash, idealOutputHash, agentOutputHash, score }) {
-    const poseidon = await this.getPoseidon();
-
-    if (!poseidon) {
-      // Fallback: just hash all inputs together
-      const combined = `${testId}|${promptHash}|${idealOutputHash}|${agentOutputHash}|${score}`;
-      return await this.hashString(combined);
-    }
-
-    const F = poseidon.F;
-
-    // Poseidon expects 5 inputs for this template
-    const hash = poseidon([
-      BigInt(testId),
-      BigInt(promptHash),
-      BigInt(idealOutputHash),
-      BigInt(agentOutputHash),
-      BigInt(score)
-    ]);
-
-    // Convert field element to clean string
-    return F.toObject(hash).toString();
+    const hash = await poseidonLeaf({
+      testId,
+      promptHash,
+      idealOutputHash,
+      agentOutputHash,
+      score
+    });
+    return hash.toString();
   }
 
   /**
@@ -129,24 +201,33 @@ export class ProofGenerator {
    * Returns root hash
    */
   async buildMerkleTree(leaves, targetSize = 16) {
-    const poseidon = await this.getPoseidon();
-
-    if (!poseidon) {
-      // Fallback: simple hash of all leaves
-      const combined = leaves.join('|');
-      return await this.hashString(combined);
-    }
-
+    const poseidon = await getPoseidon();
     const F = poseidon.F;
 
     // Pad leaves to target size
     const paddedLeaves = [...leaves];
-    while (paddedLeaves.length < targetSize) {
+    let desiredSize = Number.isInteger(targetSize) && targetSize > 0
+      ? targetSize
+      : (paddedLeaves.length > 0 ? paddedLeaves.length : 1);
+
+    if (paddedLeaves.length > desiredSize) {
+      desiredSize = paddedLeaves.length;
+    }
+
+    if ((desiredSize & (desiredSize - 1)) !== 0) {
+      let powerOfTwo = 1;
+      while (powerOfTwo < desiredSize) {
+        powerOfTwo <<= 1;
+      }
+      desiredSize = powerOfTwo;
+    }
+
+    while (paddedLeaves.length < desiredSize) {
       paddedLeaves.push('0');
     }
 
     // Build tree level by level
-    let currentLevel = paddedLeaves.map(leaf => BigInt(leaf));
+    let currentLevel = paddedLeaves.map(leaf => toFieldElement(leaf));
 
     while (currentLevel.length > 1) {
       const nextLevel = [];
@@ -156,13 +237,13 @@ export class ProofGenerator {
         const right = i + 1 < currentLevel.length ? currentLevel[i + 1] : currentLevel[i];
 
         const parentHash = poseidon([left, right]);
-        nextLevel.push(parentHash);
+        nextLevel.push(F.toObject(parentHash));
       }
 
       currentLevel = nextLevel;
     }
 
-    return F.toObject(F.e(currentLevel[0])).toString();
+    return toFieldElement(currentLevel[0]).toString();
   }
 
   /**
@@ -173,30 +254,18 @@ export class ProofGenerator {
    */
   async buildMerkleTreeWithPaths(leaves, depth = null) {
     const treeDepth = depth !== null ? depth : this.merkleTreeDepth;
-    const poseidon = await this.getPoseidon();
-
-    if (!poseidon) {
-      // Fallback mode - return dummy data
-      return {
-        root: await this.hashString(leaves.join('|')),
-        paths: leaves.map(() => ({
-          pathElements: Array(treeDepth).fill('0'),
-          pathIndices: Array(treeDepth).fill(0)
-        }))
-      };
-    }
-
+    const poseidon = await getPoseidon();
     const F = poseidon.F;
 
     // Pad to next power of 2
     const targetSize = Math.pow(2, treeDepth);
-    const paddedLeaves = [...leaves];
+    const paddedLeaves = [...leaves].map(value => toFieldElement(value));
     while (paddedLeaves.length < targetSize) {
-      paddedLeaves.push('0');
+      paddedLeaves.push(0n);
     }
 
     // Build tree and store all levels
-    const tree = [paddedLeaves.map(leaf => BigInt(leaf))];
+    const tree = [paddedLeaves];
 
     let currentLevel = tree[0];
     while (currentLevel.length > 1) {
@@ -206,7 +275,7 @@ export class ProofGenerator {
         const left = currentLevel[i];
         const right = i + 1 < currentLevel.length ? currentLevel[i + 1] : currentLevel[i];
         const parentHash = poseidon([left, right]);
-        nextLevel.push(parentHash);
+        nextLevel.push(F.toObject(parentHash));
       }
 
       tree.push(nextLevel);
@@ -214,8 +283,8 @@ export class ProofGenerator {
     }
 
     // Convert root to string - use F.toObject() to get clean BigInt, then toString()
-    const rootElement = F.e(tree[tree.length - 1][0]);
-    const root = F.toObject(rootElement).toString();
+    const rootElement = toFieldElement(tree[tree.length - 1][0]);
+    const root = rootElement.toString();
 
     // Generate authentication paths for each leaf
     const paths = [];
@@ -234,8 +303,8 @@ export class ProofGenerator {
           : tree[level][index];
 
         // Convert field element to string - use F.toObject() to get clean BigInt
-        const siblingElement = F.e(sibling);
-        pathElements.push(F.toObject(siblingElement).toString());
+        const siblingElement = toFieldElement(sibling);
+        pathElements.push(siblingElement.toString());
         pathIndices.push(isLeft ? 0 : 1);
 
         index = Math.floor(index / 2);
@@ -255,13 +324,13 @@ export class ProofGenerator {
    */
   async generateDualProof({
     testResults,          // All test results with full data
-    aggregateScore,       // Full dataset aggregate score
+    aggregateScore,       // Sum of per-test scores for full dataset
     numTests,             // Total number of tests
     executionLogs,        // Execution logs
     scoringCriteria,      // Scoring method
     publicIndices,        // Which tests are public (10%)
     publicResults,        // Results for public tests (with full data)
-    subsetAggregateScore  // Aggregate score for public subset
+    subsetAggregateScore  // Sum of per-test scores for public subset
   }) {
     // Normalize public indices to safe integers (defensive against BigInt/string inputs)
     const normalizedPublicIndices = (publicIndices || []).map((idx, i) => {
@@ -303,6 +372,11 @@ export class ProofGenerator {
     }
 
     try {
+      const methodologyCommitments = await this.computeMethodologyCommitments({
+        executionLogs,
+        scoringCriteria
+      });
+
       // CRITICAL FIX: Prepare main circuit inputs FIRST to get adjusted scores
       // Then extract subset data from the adjusted full dataset
       console.log('  Preparing main circuit inputs (adjusting scores)...');
@@ -311,12 +385,11 @@ export class ProofGenerator {
         testResults,
         aggregateScore,
         numTests,
-        executionLogs,
-        scoringCriteria,
         publicIndices: normalizedPublicIndices,
         publicResults: normalizedPublicResults,
         subsetMerkleRoot: '0', // Dummy value, will be replaced
-        subsetAggregateScore
+        subsetAggregateScore,
+        commitments: methodologyCommitments
       });
 
       // Extract adjusted subset data from the main circuit inputs
@@ -370,11 +443,11 @@ export class ProofGenerator {
         adjustedSubsetData,
         subsetAggregateScore,
         numSubset: normalizedPublicResults.length,
-        executionLogs,
-        scoringCriteria
+        commitments: methodologyCommitments
       });
 
-      console.log('    Subset proof public signals:', subsetProof.publicSignals.map(x => x.toString()));
+      subsetProof.publicSignals = subsetProof.publicSignals.map(x => x.toString());
+      console.log('    Subset proof public signals:', subsetProof.publicSignals);
 
       // Extract subset merkle root from proof outputs
       const subsetMerkleRoot = subsetProof.publicSignals[0];
@@ -406,28 +479,50 @@ export class ProofGenerator {
       );
 
       const vKey = JSON.parse(await fs.promises.readFile(this.vkeyPath, 'utf8'));
-
+      const mainPublicSignals = publicSignals.map(signal => signal.toString());
       const numPublicInputs = 6;
+
       const mainProof = {
         proof,
-        publicSignals,
+        publicSignals: mainPublicSignals,
         verificationKey: vKey,
         protocol: 'groth16',
         curve: 'bn128',
         commitments: {
-          logsCommitment: publicSignals[numPublicInputs],
-          libraryVersion: publicSignals[numPublicInputs + 1],
-          scoringMethod: publicSignals[numPublicInputs + 2]
+          logsCommitment: mainPublicSignals[numPublicInputs],
+          libraryVersion: mainPublicSignals[numPublicInputs + 1],
+          scoringMethod: mainPublicSignals[numPublicInputs + 2]
         }
+      };
+
+      const commitments = {
+        fullMerkleRoot: mainPublicSignals[0],
+        subsetMerkleRoot: subsetMerkleRoot.toString(),
+        logsCommitment: mainProof.commitments.logsCommitment,
+        libraryVersion: mainProof.commitments.libraryVersion,
+        scoringMethod: mainProof.commitments.scoringMethod,
+        executionLogsHash: methodologyCommitments.executionLogsHash,
+        libraryCodeHash: methodologyCommitments.libraryCodeHash,
+        scoringMethodHash: methodologyCommitments.scoringMethodHash
       };
 
       return {
         mainProof,
-        subsetProof,
+        subsetProof: {
+          ...subsetProof,
+          publicSignals: subsetProof.publicSignals
+        },
         isPlaceholder: false,
         protocol: 'groth16-dual',
         publicIndices: normalizedPublicIndices,
-        publicTests: normalizedPublicResults.length
+        publicTests: normalizedPublicResults.length,
+        commitments,
+        aggregates: {
+          fullClaim: mainCircuitInputs.claimedScore.toString(),
+          subsetClaim: mainCircuitInputs.subsetClaimedScore.toString(),
+          totalTests: numTests.toString(),
+          subsetTests: normalizedPublicResults.length.toString()
+        }
       };
 
     } catch (error) {
@@ -458,15 +553,13 @@ export class ProofGenerator {
     publicResults,
     subsetAggregateScore,
     numSubset,
-    executionLogs,
-    scoringCriteria
+    commitments
   }) {
     const circuitInputs = await this.prepareSubsetCircuitInputs({
       publicResults,
       subsetAggregateScore,
       numSubset,
-      executionLogs,
-      scoringCriteria
+      commitments
     });
 
     // Generate witness and proof for subset circuit
@@ -498,25 +591,12 @@ export class ProofGenerator {
     adjustedSubsetData,  // Pre-extracted: {testIds, promptHashes, idealOutputHashes, agentOutputHashes, scores}
     subsetAggregateScore,
     numSubset,
-    executionLogs,
-    scoringCriteria
+    commitments
   }) {
-    // Compute commitments (same as prepareSubsetCircuitInputs but without score adjustment)
-    const executionLogsHash = await this.hashString(JSON.stringify(executionLogs || []));
-    const libraryCodeHash = await this.hashString(`agent-verifier@${this.libraryVersion}`);
-    const scoringMethodHash = await this.hashString(JSON.stringify(scoringCriteria || 'default'));
+    const { executionLogsHash, libraryCodeHash, scoringMethodHash } = commitments;
 
-    const poseidon = await this.getPoseidon();
-    let libraryVersion, scoringMethod;
-
-    if (poseidon) {
-      const F = poseidon.F;
-      libraryVersion = F.toObject(poseidon([BigInt(libraryCodeHash)])).toString();
-      scoringMethod = F.toObject(poseidon([BigInt(scoringMethodHash)])).toString();
-    } else {
-      libraryVersion = libraryCodeHash;
-      scoringMethod = scoringMethodHash;
-    }
+    const libraryVersion = (await poseidonHash([libraryCodeHash])).toString();
+    const scoringMethod = (await poseidonHash([scoringMethodHash])).toString();
 
     // Use pre-adjusted data directly - NO score adjustment!
     const circuitInputs = {
@@ -545,14 +625,14 @@ export class ProofGenerator {
     for (let i = 0; i < Number(circuitInputs.numTests) && i < adjustedSubsetData.scores.length; i++) {
       expectedSum += Number(adjustedSubsetData.scores[i]);
     }
-    const expectedProduct = Number(circuitInputs.claimedScore) * Number(circuitInputs.numTests);
+    const claimedSum = Number(circuitInputs.claimedScore);
     console.log('    Expected sumScores (first', circuitInputs.numTests.toString(), 'scores):', expectedSum);
-    console.log('    Expected product (claimedScore * numTests):', expectedProduct);
-    console.log('    Match:', expectedSum === expectedProduct ? '✓' : '✗ MISMATCH!');
+    console.log('    Claimed sum:', claimedSum);
+    console.log('    Match:', expectedSum === claimedSum ? '✓' : '✗ MISMATCH!');
 
-    if (expectedSum !== expectedProduct) {
+    if (expectedSum !== claimedSum) {
       console.error('    ⚠️  Circuit assertion will fail!');
-      console.error('    This means: subsetAggregateScore * numTests !== sum of actual scores');
+      console.error('    This means: subsetAggregateScore does not equal the sum of actual scores');
       console.error('    Either the aggregate score calculation is wrong, or the score data is inconsistent');
     }
 
@@ -591,16 +671,20 @@ export class ProofGenerator {
     subsetMerkleRoot,
     subsetAggregateScore
   }) {
+    const commitments = await this.computeMethodologyCommitments({
+      executionLogs,
+      scoringCriteria
+    });
+
     const circuitInputs = await this.prepareMainCircuitInputs({
       testResults,
       aggregateScore,
       numTests,
-      executionLogs,
-      scoringCriteria,
       publicIndices,
       publicResults,
       subsetMerkleRoot,
-      subsetAggregateScore
+      subsetAggregateScore,
+      commitments
     });
 
     // Generate witness and proof for main circuit
@@ -645,9 +729,10 @@ export class ProofGenerator {
     publicResults,
     subsetAggregateScore,
     numSubset,
-    executionLogs,
-    scoringCriteria
+    commitments
   }) {
+    const { executionLogsHash, libraryCodeHash, scoringMethodHash } = commitments;
+
     // Extract test case data
     const testIds = [];
     const promptHashes = [];
@@ -660,8 +745,8 @@ export class ProofGenerator {
       if (i < publicResults.length) {
         const result = publicResults[i];
 
-        // Test ID (use index if not provided)
-        testIds.push(BigInt(i + 1));
+        const identifier = result.testId ?? result.id ?? i + 1;
+        testIds.push(identifierToField(identifier));
 
         // Hash the test content
         promptHashes.push(BigInt(await this.hashString(result.prompt || '')));
@@ -676,7 +761,7 @@ export class ProofGenerator {
         scores.push(BigInt(score));
       } else {
         // Padding to maxSubset
-        testIds.push(BigInt(0));
+        testIds.push(0n);
         promptHashes.push(BigInt(0));
         idealOutputHashes.push(BigInt(0));
         agentOutputHashes.push(BigInt(0));
@@ -684,27 +769,11 @@ export class ProofGenerator {
       }
     }
 
-    // Adjust scores to match aggregate exactly
+    // Convert to plain numbers for downstream processing
     const intScores = scores.map(s => Number(s));
-    this.adjustScoresToMatchAggregate(intScores, subsetAggregateScore, numSubset);
 
-    // Compute commitments (these become PUBLIC INPUTS to match main circuit outputs)
-    const executionLogsHash = await this.hashString(JSON.stringify(executionLogs || []));
-    const libraryCodeHash = await this.hashString(`agent-verifier@${this.libraryVersion}`);
-    const scoringMethodHash = await this.hashString(JSON.stringify(scoringCriteria || 'default'));
-
-    // Compute Poseidon commitments (matching circuit logic)
-    const poseidon = await this.getPoseidon();
-    let libraryVersion, scoringMethod;
-
-    if (poseidon) {
-      const F = poseidon.F;
-      libraryVersion = F.toObject(poseidon([BigInt(libraryCodeHash)])).toString();
-      scoringMethod = F.toObject(poseidon([BigInt(scoringMethodHash)])).toString();
-    } else {
-      libraryVersion = libraryCodeHash;
-      scoringMethod = scoringMethodHash;
-    }
+    const libraryVersion = (await poseidonHash([libraryCodeHash])).toString();
+    const scoringMethod = (await poseidonHash([scoringMethodHash])).toString();
 
     return {
       // Private inputs: test case data
@@ -734,13 +803,13 @@ export class ProofGenerator {
     testResults,
     aggregateScore,
     numTests,
-    executionLogs,
-    scoringCriteria,
     publicIndices,
     publicResults,
     subsetMerkleRoot,
-    subsetAggregateScore
+    subsetAggregateScore,
+    commitments
   }) {
+    const { executionLogsHash, libraryCodeHash, scoringMethodHash } = commitments;
     // Extract test case data for ALL tests
     const testIds = [];
     const promptHashes = [];
@@ -752,7 +821,8 @@ export class ProofGenerator {
       if (i < testResults.length) {
         const result = testResults[i];
 
-        testIds.push(BigInt(i + 1));
+        const identifier = result.testId ?? result.id ?? i + 1;
+        testIds.push(identifierToField(identifier));
         promptHashes.push(BigInt(await this.hashString(result.prompt || '')));
         idealOutputHashes.push(BigInt(await this.hashString(result.idealOutput || '')));
         agentOutputHashes.push(BigInt(await this.hashString(result.agentOutput || '')));
@@ -763,7 +833,7 @@ export class ProofGenerator {
         if (score > 100) score = 100;
         scores.push(BigInt(score));
       } else {
-        testIds.push(BigInt(0));
+        testIds.push(0n);
         promptHashes.push(BigInt(0));
         idealOutputHashes.push(BigInt(0));
         agentOutputHashes.push(BigInt(0));
@@ -773,25 +843,15 @@ export class ProofGenerator {
 
     // Adjust scores to match aggregate exactly
     const intScores = scores.map(s => Number(s));
-    const sanitizedSubsetIndices = (publicIndices || [])
-      .map(idx => Number(idx))
-      .filter(idx => Number.isInteger(idx) && idx >= 0 && idx < Number(numTests));
-
-    if (Array.isArray(publicIndices) && sanitizedSubsetIndices.length !== publicIndices.length) {
-      console.warn('⚠️  Some public subset indices were out of bounds during score adjustment');
-    }
-
-    this.adjustSubsetScoresToMatchAggregate(intScores, sanitizedSubsetIndices, subsetAggregateScore);
-    this.adjustScoresToMatchAggregate(intScores, aggregateScore, numTests, { lockedIndices: new Set(sanitizedSubsetIndices) });
 
     // Compute leaf hashes for all tests
     const leafHashes = [];
     for (let i = 0; i < this.maxTests; i++) {
       const leafHash = await this.computeTestCaseLeafHash({
-        testId: Number(testIds[i]),
-        promptHash: promptHashes[i].toString(),
-        idealOutputHash: idealOutputHashes[i].toString(),
-        agentOutputHash: agentOutputHashes[i].toString(),
+        testId: testIds[i],
+        promptHash: promptHashes[i],
+        idealOutputHash: idealOutputHashes[i],
+        agentOutputHash: agentOutputHashes[i],
         score: intScores[i]
       });
       leafHashes.push(leafHash);
@@ -819,11 +879,14 @@ export class ProofGenerator {
         const rawIdx = publicIndices[i];
         const idx = Number(rawIdx);
         if (Number.isInteger(idx) && idx >= 0 && idx < intScores.length) {
-          subsetScores.push(BigInt(intScores[idx]));
+          const scoreValue = intScores[idx];
+          // Ensure score is a valid number, default to 0 if undefined/null
+          const validScore = (scoreValue !== undefined && scoreValue !== null && Number.isFinite(scoreValue)) ? scoreValue : 0;
+          subsetScores.push(BigInt(validScore));
           paddedIndices.push(BigInt(idx));
           // Update last valid values for padding
           lastValidIdx = idx;
-          lastValidScore = BigInt(intScores[idx]);
+          lastValidScore = BigInt(validScore);
         } else {
           // Out-of-bounds or invalid index; repeat last valid
           subsetScores.push(lastValidScore);
@@ -835,11 +898,6 @@ export class ProofGenerator {
         paddedIndices.push(BigInt(lastValidIdx));
       }
     }
-
-    // Compute commitment hashes
-    const executionLogsHash = await this.hashString(JSON.stringify(executionLogs || []));
-    const libraryCodeHash = await this.hashString(`agent-verifier@${this.libraryVersion}`);
-    const scoringMethodHash = await this.hashString(JSON.stringify(scoringCriteria || 'default'));
 
     console.log('  🔍 Main circuit inputs:');
     console.log('    Public indices:', publicIndices);
@@ -888,103 +946,6 @@ export class ProofGenerator {
     };
   }
 
-  /**
-   * Adjust integer scores to match target aggregate exactly
-   * (Circuit verifies: claimedScore * numTests === sum of scores)
-   *
-   * Uses randomized adjustment order to prevent bias toward specific tests
-   */
-  adjustScoresToMatchAggregate(intScores, aggregateScore, numTests, options = {}) {
-    const claimed = Math.round(Number(aggregateScore));
-    const numTestsNum = Number(numTests);
-
-    if (!Number.isFinite(claimed) || !Number.isFinite(numTestsNum) || numTestsNum <= 0) {
-      return;
-    }
-
-    const { lockedIndices = [], startIndex = 0 } = options;
-    const lockedSet = new Set();
-
-    if (lockedIndices instanceof Set) {
-      for (const idx of lockedIndices) {
-        lockedSet.add(Number(idx));
-      }
-    } else if (Array.isArray(lockedIndices)) {
-      for (const idx of lockedIndices) {
-        lockedSet.add(Number(idx));
-      }
-    } else if (Number.isInteger(lockedIndices)) {
-      lockedSet.add(Number(lockedIndices));
-    }
-
-    const indices = [];
-    for (let i = 0; i < numTestsNum; i++) {
-      indices.push(startIndex + i);
-    }
-
-    let currentSum = 0;
-    for (const idx of indices) {
-      const value = intScores[idx];
-      currentSum += Number.isFinite(value) ? value : 0;
-    }
-
-    const targetSum = claimed * numTestsNum;
-    let delta = targetSum - currentSum;
-
-    if (delta === 0) {
-      return;
-    }
-
-    let adjustableIndices = indices.filter(idx => !lockedSet.has(idx));
-    if (adjustableIndices.length === 0) {
-      adjustableIndices = indices.slice();
-    }
-
-    for (let i = adjustableIndices.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [adjustableIndices[i], adjustableIndices[j]] = [adjustableIndices[j], adjustableIndices[i]];
-    }
-
-    for (const idx of adjustableIndices) {
-      if (delta === 0) break;
-
-      const current = intScores[idx] ?? 0;
-
-      if (delta > 0 && current < 100) {
-        intScores[idx] = current + 1;
-        delta--;
-      } else if (delta < 0 && current > 0) {
-        intScores[idx] = current - 1;
-        delta++;
-      }
-    }
-
-    if (delta !== 0) {
-      console.warn(`⚠️  Score adjustment incomplete: ${Math.abs(delta)} points remaining (all scores at boundaries or locked)`);
-    }
-  }
-
-  adjustSubsetScoresToMatchAggregate(intScores, subsetIndices, subsetAggregateScore) {
-    if (!Array.isArray(subsetIndices) || subsetIndices.length === 0) {
-      return;
-    }
-
-    const validIndices = subsetIndices
-      .map(idx => Number(idx))
-      .filter(idx => Number.isInteger(idx) && idx >= 0 && idx < intScores.length);
-
-    if (validIndices.length === 0) {
-      return;
-    }
-
-    const subsetScores = validIndices.map(idx => intScores[idx]);
-    this.adjustScoresToMatchAggregate(subsetScores, subsetAggregateScore, validIndices.length);
-
-    validIndices.forEach((idx, i) => {
-      intScores[idx] = subsetScores[i];
-    });
-  }
-
   async computeSubsetMerkleRootFromData(adjustedSubsetData) {
     const leaves = [];
 
@@ -1005,11 +966,12 @@ export class ProofGenerator {
       leaves.push(leaf);
     }
 
-    while (leaves.length < 16) {
+    const subsetCapacity = this.subsetTreeCapacity || 1;
+    while (leaves.length < subsetCapacity) {
       leaves.push('0');
     }
 
-    return this.buildMerkleTree(leaves, 16);
+    return this.buildMerkleTree(leaves, subsetCapacity);
   }
 
   /**
@@ -1053,9 +1015,9 @@ export class ProofGenerator {
     const numTestsNum = Number(numTests);
 
     // Compute commitment hashes
-    const logsHash = await this.hashString(JSON.stringify(executionLogs || []));
-    const libraryCodeHash = await this.hashString(`agent-verifier@${this.libraryVersion}`);
-    const scoringMethodHash = await this.hashString(JSON.stringify(scoringCriteria || 'default'));
+    const logsHash = this.computeExecutionLogsHash(executionLogs);
+    const libraryCodeHash = await this.computeLibraryCodeHash();
+    const scoringMethodHash = this.computeScoringMethodHash(scoringCriteria);
 
     // Dummy Merkle roots
     const merkleRoot = await this.hashString('dummy-main-merkle-root');
@@ -1116,13 +1078,31 @@ export class ProofGenerator {
       curve: 'bn128'
     };
 
+    const commitments = {
+      fullMerkleRoot: merkleRoot.toString(),
+      subsetMerkleRoot: subsetMerkleRoot.toString(),
+      logsCommitment: logsHash.toString(),
+      libraryVersion: libraryCodeHash.toString(),
+      scoringMethod: scoringMethodHash.toString(),
+      executionLogsHash: logsHash.toString(),
+      libraryCodeHash: libraryCodeHash.toString(),
+      scoringMethodHash: scoringMethodHash.toString()
+    };
+
     return {
       mainProof,
       subsetProof,
       isPlaceholder: true,
       protocol: 'groth16-dual',
       publicIndices,
-      publicTests: publicResults.length
+      publicTests: publicResults.length,
+      commitments,
+      aggregates: {
+        fullClaim: Math.round(aggScore).toString(),
+        subsetClaim: Math.round(subsetAggScore).toString(),
+        totalTests: numTestsNum.toString(),
+        subsetTests: publicResults.length.toString()
+      }
     };
   }
 

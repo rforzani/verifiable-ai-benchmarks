@@ -98,6 +98,16 @@ async function main() {
   console.log(`   - 100% reproducible`);
   console.log(`   - Works offline`);
   console.log();
+
+  // Check for placeholder proofs
+  if (result.zkProof.isPlaceholder) {
+    console.log('⚠️  WARNING: Placeholder proofs detected!');
+    console.log('   Circuits not compiled - proofs are for testing only');
+    console.log('   ❌ Cannot register agents with placeholder proofs');
+    console.log('   ℹ️  Compile circuits first for production use');
+    console.log();
+  }
+
   console.log('='.repeat(60));
 }
 

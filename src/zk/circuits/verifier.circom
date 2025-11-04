@@ -27,6 +27,16 @@ include "./merkle-verifier.circom";
  */
 
 template AgentVerifier(maxTests, maxSubset, merkleTreeDepth, nBits) {
+    // Derived constants for subset Merkle tree padding
+    var subsetTreeCapacity = 1;
+    var subsetTreeDepth = 0;
+    for (var i = 0; i < 32; i++) {
+        if (subsetTreeCapacity < maxSubset) {
+            subsetTreeCapacity *= 2;
+            subsetTreeDepth += 1;
+        }
+    }
+
     // ============= PRIVATE INPUTS: TEST CASE DATA =============
     // The circuit takes ACTUAL test case data, not just hashes
 
@@ -186,11 +196,8 @@ template AgentVerifier(maxTests, maxSubset, merkleTreeDepth, nBits) {
     signal sumScores;
     sumScores <== partialSums[maxTests];
 
-    // 7. Verify claimed score matches computed score
-    // claimedScore * numTests === sumScores
-    signal product;
-    product <== claimedScore * numTests;
-    product === sumScores;
+    // 7. Verify claimed score matches computed score (sum of per-test scores)
+    claimedScore === sumScores;
 
     // 8. Constrain all scores to valid range (0-100)
     component rangeChecks[maxTests];
@@ -275,10 +282,8 @@ template AgentVerifier(maxTests, maxSubset, merkleTreeDepth, nBits) {
     signal subsetSumScores;
     subsetSumScores <== subsetPartialSums[maxSubset];
 
-    // Verify: subsetClaimedScore * numSubset === subsetSumScores
-    signal subsetProduct;
-    subsetProduct <== subsetClaimedScore * numSubset;
-    subsetProduct === subsetSumScores;
+    // Verify: subsetClaimedScore equals sum of subset scores
+    subsetClaimedScore === subsetSumScores;
 
     // ============= CRITICAL: SUBSET MERKLE ROOT VERIFICATION =============
     // This is THE KEY security property that proves subset indices are correct!
@@ -361,23 +366,22 @@ template AgentVerifier(maxTests, maxSubset, merkleTreeDepth, nBits) {
     // it matches the subset circuit's Merkle root. This proves the subset indices
     // actually correspond to the public tests.
     //
-    // For maxSubset = 10, we pad to 16 (next power of 2, 2^4)
     // Padding value: 0 (standard for Merkle trees)
 
-    // Pad subset leaves to power of 2 (10 → 16)
-    signal paddedSubsetLeaves[16];
+    // Pad subset leaves to the next power of two capacity
+    signal paddedSubsetLeaves[subsetTreeCapacity];
     for (var i = 0; i < maxSubset; i++) {
         paddedSubsetLeaves[i] <== subsetLeafHashes[i];
     }
     // Pad remaining slots with 0
-    for (var i = maxSubset; i < 16; i++) {
+    for (var i = maxSubset; i < subsetTreeCapacity; i++) {
         paddedSubsetLeaves[i] <== 0;
     }
 
     // 14. Build Merkle tree from padded leaves
-    // Use MerkleTreeRoot(16, 4) for 16 leaves with 4 levels
-    component subsetTreeBuilder = MerkleTreeRoot(16, 4);
-    for (var i = 0; i < 16; i++) {
+    // Use MerkleTreeRoot with derived capacity/depth
+    component subsetTreeBuilder = MerkleTreeRoot(subsetTreeCapacity, subsetTreeDepth);
+    for (var i = 0; i < subsetTreeCapacity; i++) {
         subsetTreeBuilder.leaves[i] <== paddedSubsetLeaves[i];
     }
 
@@ -403,8 +407,8 @@ template AgentVerifier(maxTests, maxSubset, merkleTreeDepth, nBits) {
 }
 
 // Instantiate with:
-// - Up to 100 total tests
-// - Up to 10 public tests (10% of 100)
+// - Up to 1000 total tests
+// - Up to 50 public tests (5% of 1000)
 // - Merkle tree depth of 10 (supports up to 1024 tests)
-// - 8 bits for comparisons
-component main {public [merkleRoot, claimedScore, numTests, subsetMerkleRoot, subsetClaimedScore, numSubset]} = AgentVerifier(100, 10, 10, 8);
+// - 16 bits for comparisons
+component main {public [merkleRoot, claimedScore, numTests, subsetMerkleRoot, subsetClaimedScore, numSubset]} = AgentVerifier(1000, 50, 10, 16);

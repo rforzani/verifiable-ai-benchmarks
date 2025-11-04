@@ -20,6 +20,12 @@ include "./merkle-verifier.circom";
  */
 
 template SubsetVerifier(maxTests, merkleTreeDepth, nBits) {
+    // Derived constants for Merkle tree padding
+    var subsetTreeCapacity = 1;
+    for (var i = 0; i < merkleTreeDepth; i++) {
+        subsetTreeCapacity *= 2;
+    }
+
     // ============= PRIVATE INPUTS: TEST CASE DATA =============
     // The circuit takes ACTUAL test case data, not just hashes
 
@@ -99,20 +105,19 @@ template SubsetVerifier(maxTests, merkleTreeDepth, nBits) {
     // We compute the Merkle root directly from the test leaf hashes
     // This matches the main circuit's subset tree construction
 
-    // For maxTests = 10, pad to 16 (next power of 2, 2^4)
-    signal paddedLeaves[16];
+    signal paddedLeaves[subsetTreeCapacity];
     for (var i = 0; i < maxTests; i++) {
         paddedLeaves[i] <== leafHashes[i];
     }
     // Pad remaining slots with 0
-    for (var i = maxTests; i < 16; i++) {
+    for (var i = maxTests; i < subsetTreeCapacity; i++) {
         paddedLeaves[i] <== 0;
     }
 
     // Build Merkle tree from padded leaves
-    // Use MerkleTreeRoot(16, 4) for 16 leaves with 4 levels
-    component treeBuilder = MerkleTreeRoot(16, 4);
-    for (var i = 0; i < 16; i++) {
+    // Use MerkleTreeRoot with derived capacity/depth
+    component treeBuilder = MerkleTreeRoot(subsetTreeCapacity, merkleTreeDepth);
+    for (var i = 0; i < subsetTreeCapacity; i++) {
         treeBuilder.leaves[i] <== paddedLeaves[i];
     }
 
@@ -149,11 +154,8 @@ template SubsetVerifier(maxTests, merkleTreeDepth, nBits) {
     signal sumScores;
     sumScores <== partialSums[maxTests];
 
-    // 6. Verify claimed score matches computed score
-    // claimedScore * numTests === sumScores
-    signal product;
-    product <== claimedScore * numTests;
-    product === sumScores;
+    // 6. Verify claimed score matches computed score (sum of subset scores)
+    claimedScore === sumScores;
 
     // 7. Constrain all scores to valid range (0-100)
     component rangeChecks[maxTests];
@@ -166,10 +168,10 @@ template SubsetVerifier(maxTests, merkleTreeDepth, nBits) {
 }
 
 // Instantiate with:
-// - Up to 10 public tests
-// - Merkle tree depth of 4 (padded to 16 leaves for tree construction)
-// - 8 bits for comparisons
+// - Up to 50 public tests (5% subset)
+// - Merkle tree depth of 6 (padded to 64 leaves for tree construction)
+// - 16 bits for comparisons
 //
 // Public inputs: claimedScore, numTests, libraryVersion, scoringMethod
 // Public outputs: merkleRoot, logsCommitment
-component main {public [claimedScore, numTests, libraryVersion, scoringMethod]} = SubsetVerifier(10, 4, 8);
+component main {public [claimedScore, numTests, libraryVersion, scoringMethod]} = SubsetVerifier(50, 6, 16);

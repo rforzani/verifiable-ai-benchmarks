@@ -1,222 +1,208 @@
-import { MerkleTree as MerkleTreeJS } from 'merkletreejs';
-import { sha256, deterministicStringify } from '../utils/crypto.js';
+import {
+  getPoseidon,
+  identifierToField,
+  poseidonLeaf,
+  sha256Field,
+  toFieldElement
+} from '../utils/poseidon.js';
 
 /**
- * Merkle Tree for test suite commitment
- * Generates cryptographic proof of test suite integrity
+ * Spec-compliant Merkle tree for benchmark commitments.
+ * Uses Poseidon hashing over the tuple:
+ * (testId, promptHash, idealOutputHash, agentOutputHash, score)
  */
 export class MerkleTree {
-  constructor(testSuite) {
-    this.testSuite = testSuite;
+  constructor() {
+    this.testResults = [];
     this.leaves = [];
-    this.tree = null;
+    this.levels = [];
     this.root = null;
-    this.leafMap = new Map(); // testId -> leaf hash
   }
 
   /**
-   * Hash a single test case deterministically
-   * @param {object} test - Test case object
-   * @returns {Buffer} SHA-256 hash of test case
+   * Build the Merkle tree from executed test results.
+   * @param {Array<object>} testResults - Results containing prompt, outputs, scores, etc.
+   * @returns {Promise<string>} Merkle root as decimal string.
    */
-  hashTestCase(test) {
-    // Only hash the fields that define the test
-    // Don't include metadata as it's not part of verification
-    const testData = {
-      id: test.id,
-      prompt: test.prompt,
-      idealOutput: test.idealOutput,
-      scoringType: test.scoringType
-    };
+  async build(testResults) {
+    if (!Array.isArray(testResults) || testResults.length === 0) {
+      throw new Error('Test results are required to build the Merkle tree');
+    }
 
-    // Use deterministic serialization
-    const serialized = deterministicStringify(testData);
-    return sha256(serialized);
+    this.testResults = testResults;
+    this.leaves = await Promise.all(
+      testResults.map((result, index) => this.computeLeaf(result, index))
+    );
+
+    await this.buildLevels(this.leaves);
+    this.root = this.levels[this.levels.length - 1][0];
+    return this.root.toString();
   }
 
   /**
-   * Generate Merkle tree and compute root
-   * @returns {string} Merkle root as hex string
+   * Compute a single leaf hash per spec.
+   * @param {object} result - Test execution result.
+   * @param {number} index - Fallback index for missing identifiers.
+   * @returns {Promise<bigint>}
+   * @private
    */
-  generateRoot() {
-    // Hash each test case to create leaves
-    this.leaves = this.testSuite.map(test => {
-      const leaf = this.hashTestCase(test);
-      this.leafMap.set(test.id, leaf);
-      return leaf;
+  async computeLeaf(result, index) {
+    const identifier = result.testId ?? result.id ?? index + 1;
+
+    const testId = identifierToField(identifier);
+    const promptHash = sha256Field(result.prompt ?? '');
+    const idealOutputHash = sha256Field(result.idealOutput ?? '');
+    const agentOutputHash = sha256Field(result.agentOutput ?? '');
+    const score = this.normaliseScore(result);
+
+    return poseidonLeaf({
+      testId,
+      promptHash,
+      idealOutputHash,
+      agentOutputHash,
+      score
     });
+  }
 
-    // Build Merkle tree
-    this.tree = new MerkleTreeJS(
-      this.leaves,
-      sha256,
-      {
-        sortPairs: true,  // Prevents second-preimage attacks
-        hashLeaves: false // We already hashed the leaves
+  /**
+   * Build all Merkle levels from leaves.
+   * @param {Array<bigint>} leaves
+   * @returns {Promise<void>}
+   * @private
+   */
+  async buildLevels(leaves) {
+    const poseidon = await getPoseidon();
+    const F = poseidon.F;
+
+    let currentLevel = leaves.map(toFieldElement);
+    const levels = [currentLevel];
+
+    while (currentLevel.length > 1) {
+      if (currentLevel.length % 2 === 1) {
+        currentLevel = [...currentLevel, currentLevel[currentLevel.length - 1]];
       }
-    );
 
-    // Get root as hex string
-    this.root = this.tree.getRoot().toString('hex');
-
-    return this.root;
-  }
-
-  /**
-   * Get Merkle proof for a specific test case
-   * @param {string} testId - Test case ID
-   * @returns {Array} Merkle proof array
-   */
-  getProof(testId) {
-    const leaf = this.leafMap.get(testId);
-
-    if (!leaf) {
-      throw new Error(`Test ID not found: ${testId}`);
-    }
-
-    return this.tree.getProof(leaf);
-  }
-
-  /**
-   * Get Merkle proof formatted for ZK circuit
-   * @param {string} testId - Test case ID
-   * @returns {object} Proof formatted for circuit { elements, indices }
-   */
-  getProofForCircuit(testId) {
-    const proof = this.getProof(testId);
-
-    return {
-      elements: proof.map(p => p.data.toString('hex')),
-      indices: proof.map(p => p.position === 'left' ? 0 : 1)
-    };
-  }
-
-  /**
-   * Verify a Merkle proof
-   * @param {Array} proof - Merkle proof
-   * @param {Buffer} leaf - Leaf to verify
-   * @param {string} root - Expected root (hex string)
-   * @returns {boolean} True if proof is valid
-   */
-  verify(proof, leaf, root) {
-    const rootBuffer = Buffer.from(root, 'hex');
-    return this.tree.verify(proof, leaf, rootBuffer);
-  }
-
-  /**
-   * Get leaf hash for a test case
-   * @param {string} testId - Test case ID
-   * @returns {Buffer} Leaf hash
-   */
-  getLeaf(testId) {
-    return this.leafMap.get(testId);
-  }
-
-  /**
-   * Get all leaves as hex strings
-   * @returns {Array<string>} Array of leaf hashes
-   */
-  getLeavesHex() {
-    return this.leaves.map(leaf => leaf.toString('hex'));
-  }
-
-  /**
-   * Get tree depth (needed for circuit configuration)
-   * @returns {number} Tree depth
-   */
-  getDepth() {
-    if (!this.tree) {
-      throw new Error('Tree not generated yet. Call generateRoot() first.');
-    }
-    return this.tree.getDepth();
-  }
-
-  /**
-   * Get complete tree data for debugging
-   * @returns {object} Tree statistics and data
-   */
-  getTreeInfo() {
-    if (!this.tree) {
-      throw new Error('Tree not generated yet. Call generateRoot() first.');
-    }
-
-    return {
-      root: this.root,
-      depth: this.getDepth(),
-      leafCount: this.leaves.length,
-      leaves: this.getLeavesHex()
-    };
-  }
-
-  /**
-   * Generate Merkle root for a subset of tests
-   * Used for dual-proof system (public subset)
-   * @param {Array} subsetTests - Subset of test cases
-   * @returns {string} Merkle root as hex string
-   */
-  generateSubsetRoot(subsetTests) {
-    if (!subsetTests || subsetTests.length === 0) {
-      throw new Error('Subset must contain at least one test');
-    }
-
-    // Hash each test case in the subset
-    const subsetLeaves = subsetTests.map(test => this.hashTestCase(test));
-
-    // Build Merkle tree for subset
-    const subsetTree = new MerkleTreeJS(
-      subsetLeaves,
-      sha256,
-      {
-        sortPairs: true,
-        hashLeaves: false
+      const nextLevel = [];
+      for (let i = 0; i < currentLevel.length; i += 2) {
+        const parent = poseidon([currentLevel[i], currentLevel[i + 1]]);
+        nextLevel.push(F.toObject(parent));
       }
-    );
 
-    // Return root as hex string
-    return subsetTree.getRoot().toString('hex');
+      levels.push(nextLevel);
+      currentLevel = nextLevel;
+    }
+
+    this.levels = levels;
   }
 
   /**
-   * Generate dual Merkle roots (full + subset)
-   * @param {Array} publicIndices - Indices of public tests in the full test suite
-   * @returns {Object} { fullRoot, subsetRoot, publicTests }
+   * Get Merkle root as decimal string.
+   * @returns {string}
    */
-  generateDualRoots(publicIndices) {
-    // Generate full root
-    const fullRoot = this.generateRoot();
+  getRoot() {
+    if (!this.root) {
+      throw new Error('Merkle tree has not been built yet');
+    }
+    return this.root.toString();
+  }
 
-    // Validate and sort public indices to ensure consistent Merkle tree order
-    // Check if indices are already sorted
-    const isSorted = publicIndices.every((val, i, arr) => i === 0 || arr[i - 1] <= val);
+  /**
+   * Retrieve raw leaf hash by index (decimal string).
+   * @param {number} index
+   * @returns {string}
+   */
+  getLeaf(index) {
+    if (!this.leaves.length) {
+      throw new Error('Merkle tree has not been built yet');
+    }
+    return this.leaves[index]?.toString() ?? null;
+  }
 
-    if (!isSorted) {
-      console.warn('⚠️  Public indices not sorted, sorting to ensure consistent Merkle tree');
-      publicIndices = [...publicIndices].sort((a, b) => a - b);
+  /**
+   * Build inclusion proof for a given index.
+   * @param {number} index
+   * @returns {Array<{element: string, index: number}>}
+   */
+  getProof(index) {
+    if (!this.levels.length) {
+      throw new Error('Merkle tree has not been built yet');
     }
 
-    // Extract public tests in sorted order
-    const publicTests = publicIndices.map(i => this.testSuite[i]);
+    if (index < 0 || index >= this.leaves.length) {
+      throw new Error(`Leaf index out of bounds: ${index}`);
+    }
 
-    // Generate subset root
-    const subsetRoot = this.generateSubsetRoot(publicTests);
+    const path = [];
+    let currentIndex = index;
 
+    for (let level = 0; level < this.levels.length - 1; level++) {
+      const levelNodes = this.levels[level];
+      const isLeft = currentIndex % 2 === 0;
+      const siblingIndex = isLeft ? currentIndex + 1 : currentIndex - 1;
+      const sibling = levelNodes[siblingIndex] ?? levelNodes[currentIndex];
+
+      path.push({
+        element: toFieldElement(sibling).toString(),
+        index: isLeft ? 0 : 1 // Aligns with circuit expectation
+      });
+
+      currentIndex = Math.floor(currentIndex / 2);
+    }
+
+    return path;
+  }
+
+  /**
+   * Provide proof formatted for circuit input.
+   * @param {number} index
+   * @returns {{elements: Array<string>, indices: Array<number>}}
+   */
+  getProofForCircuit(index) {
+    const proof = this.getProof(index);
     return {
-      fullRoot,
-      subsetRoot,
-      publicTests,
-      publicCount: publicTests.length,
-      totalCount: this.testSuite.length
+      elements: proof.map(p => p.element),
+      indices: proof.map(p => p.index)
     };
   }
 
   /**
-   * Verify that a subset root is valid for given tests
-   * @param {Array} subsetTests - Subset of tests
-   * @param {string} claimedRoot - Claimed Merkle root
-   * @returns {boolean} True if root matches
+   * Compute Merkle root for a subset of results.
+   * @param {Array<object>} subsetResults
+   * @returns {Promise<string>}
    */
-  verifySubsetRoot(subsetTests, claimedRoot) {
-    const computedRoot = this.generateSubsetRoot(subsetTests);
-    return computedRoot === claimedRoot;
+  async computeSubsetRoot(subsetResults) {
+    if (!Array.isArray(subsetResults) || subsetResults.length === 0) {
+      throw new Error('Subset must contain at least one result');
+    }
+
+    const subsetTree = new MerkleTree();
+    return subsetTree.build(subsetResults);
+  }
+
+  /**
+   * Enforce score normalisation (0-100 scale as integers).
+   * @param {object} result
+   * @returns {bigint}
+   * @private
+   */
+  normaliseScore(result) {
+    const raw = result?.score;
+    let score;
+
+    if (typeof raw === 'boolean') {
+      score = raw ? 100 : 0;
+    } else if (typeof raw === 'number') {
+      score = Math.round(raw);
+    } else if (typeof raw === 'string' && raw.trim() !== '') {
+      score = Math.round(Number(raw));
+    } else {
+      score = 0;
+    }
+
+    if (!Number.isFinite(score)) score = 0;
+    if (score < 0) score = 0;
+    if (score > 100) score = 100;
+
+    return BigInt(score);
   }
 }

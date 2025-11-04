@@ -88,6 +88,16 @@ async function main() {
   console.log(`🔍 Public Subset Score: ${result.subset.score.toFixed(2)}`);
   console.log(`⏱️  Execution Time: ${(result.full.executionTime / 1000).toFixed(2)}s`);
   console.log();
+
+  // Check for placeholder proofs
+  if (result.zkProof.isPlaceholder) {
+    console.log('⚠️  WARNING: Placeholder proofs detected!');
+    console.log('   Circuits not compiled - proofs are for testing only');
+    console.log('   ❌ Cannot register agents with placeholder proofs');
+    console.log('   ℹ️  Compile circuits first for production use');
+    console.log();
+  }
+
   console.log(`✅ Verification complete!`);
   console.log(`📦 Proof package saved`);
   console.log('='.repeat(60));

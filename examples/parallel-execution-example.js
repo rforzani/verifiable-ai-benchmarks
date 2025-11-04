@@ -214,6 +214,15 @@ async function main() {
   console.log(`   • Huge suites (100+ tests):    maxConcurrent: 10-20 (watch rate limits!)`);
   console.log();
 
+  // Check for placeholder proofs
+  if (parallelResult.zkProof.isPlaceholder) {
+    console.log('⚠️  WARNING: Placeholder proofs detected!');
+    console.log('   Circuits not compiled - proofs are for testing only');
+    console.log('   ❌ Cannot register agents with placeholder proofs');
+    console.log('   ℹ️  Compile circuits first for production use');
+    console.log();
+  }
+
   console.log('=' .repeat(70));
   console.log('✅ Parallel Execution Showcase Complete!');
   console.log('=' .repeat(70));
