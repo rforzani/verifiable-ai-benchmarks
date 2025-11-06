@@ -4,12 +4,11 @@ import { ProviderConfigError, ProviderExecutionError } from '../../core/errors/i
 /**
  * OpenAIProvider - OpenAI Chat Completions Integration
  *
- * Provides agent execution using OpenAI's chat completion API.
- * Supports GPT-4, GPT-3.5-turbo, and other OpenAI models.
+ * Provides execution using OpenAI's chat completion API.
  *
  * Features:
  * - Chat completion with configurable models
- * - System prompts for agent behavior
+ * - System prompts for AI behavior
  * - Temperature and parameter control
  * - Automatic logging of API calls
  * - Function/tool calling support
@@ -24,7 +23,7 @@ export class OpenAIProvider extends AgentProvider {
    * @param {string} config.apiKey - OpenAI API key
    * @param {string} [config.model='gpt-5'] - Model to use
    * @param {string} [config.baseURL] - Custom API base URL (for Azure, etc.)
-   * @param {string} [config.systemPrompt] - System prompt for agent behavior
+   * @param {string} [config.systemPrompt] - System prompt for AI behavior
    * @param {number} [config.temperature=0.7] - Temperature (0-2)
    * @param {number} [config.maxTokens=4000] - Maximum tokens in response
    * @param {number} [config.topP=1] - Nucleus sampling parameter

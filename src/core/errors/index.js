@@ -1,5 +1,5 @@
 /**
- * Custom Error Classes for Research Library
+ * Custom Error Classes
  * Provides detailed error information for debugging and production monitoring
  */
 

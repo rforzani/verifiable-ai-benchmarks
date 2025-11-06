@@ -15,9 +15,9 @@ import fs from 'fs';
 import path from 'path';
 
 /**
- * ResearchVerifier - Universal AI Agent Verification with Zero-Knowledge Proofs
+ * ResearchVerifier - Universal AI Verification with Zero-Knowledge Proofs
  *
- * Provider-agnostic verifiable AI agent execution framework.
+ * Provider-agnostic verifiable AI execution framework.
  * Works with any agent system (Anthropic, OpenAI, LangChain, custom frameworks).
  *
  * Architecture:

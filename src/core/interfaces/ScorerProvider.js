@@ -4,7 +4,7 @@ import { ProviderConfigError, ScoringError } from '../errors/index.js';
  * ScorerProvider - Abstract Base Class
  *
  * Defines the interface that all scorer providers must implement.
- * Scorers can be AI-based (using LLMs), deterministic (rule-based), or human-in-the-loop.
+ * Scorers can be AI-based (using LLMs) or deterministic (rule-based)
  *
  * Contract:
  * - score() must return a number (0-100) for numeric scoring or boolean for binary scoring

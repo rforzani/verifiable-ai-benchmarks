@@ -1,5 +1,5 @@
 /**
- * Core Interfaces for Research Library
+ * Core Interfaces for Library
  *
  * These abstract base classes define the contracts that all providers must implement.
  * They enable the plugin architecture that makes this library provider-agnostic.
