@@ -23,6 +23,11 @@
    - [5.3 Verification Implementation](#53-verification-implementation)
 6. [Experimental Evaluation](#6-experimental-evaluation)
    - [6.1 Experimental Setup](#61-experimental-setup)
+   - [6.2 Correctness Validation](#62-correctness-validation)
+   - [6.3 Computational Performance Analysis](#63-computational-performance-analysis)
+   - [6.4 Proof System Validation](#64-proof-system-validation)
+   - [6.5 System Requirements Analysis](#65-system-requirements-analysis)
+   - [6.6 Proof Package Availability and Reproducibility](#66-proof-package-availability-and-reproducibility)
 7. [References](#references)
 
 ## Abstract
@@ -1351,7 +1356,133 @@ The modular architecture supports extension to emerging verification requirement
 
 ## 6. Experimental Evaluation
 
+This section presents empirical validation of the cryptographic evaluation framework through comprehensive experiments on the HumanEval code generation benchmark. The experiments demonstrate correctness through temporal consistency analysis across multiple evaluation runs, establish computational feasibility through detailed performance profiling, and validate the dual-proof architecture through successful verification of multiple AI systems spanning different capability tiers and architectural paradigms.
+
 ### 6.1 Experimental Setup
+
+The experimental infrastructure consisted of a consumer-grade workstation equipped with an Apple M3 Max processor featuring fourteen cores, thirty-six gigabytes of physical memory, and running macOS on the Darwin kernel version 25.0.0. The Node.js runtime version 24.1.0 provided the execution environment for the evaluation framework. This hardware configuration represents readily available commercial computing resources rather than specialized cryptographic infrastructure, demonstrating accessibility of the approach for practical deployment.
+
+The evaluation benchmark utilized HumanEval, a widely adopted code generation benchmark comprising one hundred sixty-four programming problems designed to assess functional correctness of synthesized code. Each problem specifies a function signature, natural language description of required behavior, and a comprehensive test suite for validation. The benchmark employs deterministic scoring through unit test execution, with Python 3 serving as the execution environment for generated solutions. Test cases are evaluated in isolation with binary pass-fail outcomes, and aggregate accuracy is computed as the percentage of problems where generated code passes all associated tests.
+
+Three AI systems were evaluated representing different capability levels and architectural approaches. Codestral-latest, an open-weights specialized code generation model from Mistral AI, represents purpose-built systems optimized for programming tasks. Claude 4.5 Haiku, a fast and efficient model from Anthropic's Claude 4 family, represents balanced systems designed for rapid inference with strong general capabilities. GPT-5-mini from OpenAI represents the latest generation of proprietary language models with broad task coverage. This selection spans the capability spectrum from specialized open models to frontier proprietary systems, validating framework generalizability across diverse architectures.
+
+The evaluation configuration employed a public subset ratio of 5.49 percent, corresponding to nine tests from the complete benchmark suite selected deterministically through cryptographic hashing of test identifiers. This partition provides empirical validation coverage while protecting the majority of test content.
+
+### 6.2 Correctness Validation
+
+Correctness validation proceeds through temporal consistency analysis where the same model evaluated on identical test suites across multiple independent runs should produce statistically consistent results within bounds established by model non-determinism. Table 1 presents accuracy measurements across three evaluation runs for each model, demonstrating result stability and framework correctness.
+
+### Table 1: Model Accuracy Across Multiple Evaluation Runs
+
+| Model | Run 1 Pass Rate (%) | Run 2 Pass Rate (%) | Run 3 Pass Rate (%) | Mean (%) | Std Dev (%) | Coefficient of Variation (%) |
+|-------|---------------------|---------------------|---------------------|----------|-------------|------------------------------|
+| Codestral-latest | 59.15 | 57.32 | 57.32 | 57.93 | 1.06 | 1.83 |
+| Claude 4.5 Haiku | 81.10 | 81.10 | 81.10 | 81.10 | 0.00 | 0.00 |
+| GPT-5-mini | 83.54 | 85.37 | 82.32 | 83.74 | 1.53 | 1.83 |
+
+The temporal consistency analysis reveals that accuracy variance across runs remains within narrow bounds. Codestral-latest exhibited standard deviation of 1.06 percentage points across three runs with mean accuracy of 57.93 percent. Claude 4.5 Haiku demonstrated perfect consistency with identical 81.10 percent accuracy across all runs, reflecting the deterministic behavior of the model and scoring methodology on this benchmark. GPT-5-mini showed standard deviation of 1.53 percentage points with mean accuracy of 83.74 percent. These variance levels fall well within expected bounds for evaluation frameworks operating on language models with inherent sampling stochasticity, even when temperature parameters are minimized.
+
+The coefficient of variation, computed as the ratio of standard deviation to mean expressed as percentage, provides a normalized measure of relative variability independent of absolute accuracy magnitudes. Both Codestral-latest and GPT-5-mini exhibited coefficients of 1.83 percent, indicating that variance represents less than two percent of measured accuracy. This low relative variance demonstrates that the evaluation framework produces stable, reproducible results suitable for reliable performance assessment and cross-model comparison.
+
+The relationship between full dataset and public subset accuracy provides additional correctness validation. Table 2 presents this comparison, revealing that public subset performance generally tracks full dataset trends while exhibiting expected variance from smaller sample sizes.
+
+### Table 2: Full Dataset versus Public Subset Accuracy
+
+| Model | Run | Full Dataset (%) | Public Subset (%) | Delta (pp) |
+|-------|-----|------------------|-------------------|------------|
+| Codestral-latest | 1 | 59.15 | 66.67 | +7.52 |
+| Codestral-latest | 2 | 57.32 | 66.67 | +9.35 |
+| Codestral-latest | 3 | 57.32 | 66.67 | +9.35 |
+| Claude 4.5 Haiku | 1 | 81.10 | 77.78 | -3.32 |
+| Claude 4.5 Haiku | 2 | 81.10 | 77.78 | -3.32 |
+| Claude 4.5 Haiku | 3 | 81.10 | 77.78 | -3.32 |
+| GPT-5-mini | 1 | 83.54 | 88.89 | +5.35 |
+| GPT-5-mini | 2 | 85.37 | 77.78 | -7.59 |
+| GPT-5-mini | 3 | 82.32 | 77.78 | -4.54 |
+
+The delta between full dataset and public subset accuracy varies both in magnitude and direction across models and runs. For Codestral-latest, the public subset consistently outperformed the full dataset by approximately nine percentage points, suggesting that the randomly selected public tests were somewhat easier than the benchmark average. Claude 4.5 Haiku exhibited the opposite pattern with public subset accuracy trailing full dataset by 3.32 percentage points consistently across runs, indicating the public subset contained slightly more challenging problems for this model. GPT-5-mini showed mixed directionality with public subset accuracy ranging from 7.59 percentage points below to 5.35 percentage points above full dataset performance.
+
+These variations are statistically expected given the small public subset size of nine tests. With such limited samples, individual test difficulty can significantly impact subset aggregate metrics. The critical observation for correctness validation is that the main circuit proof successfully verifies even when public and private partition accuracies diverge, demonstrating that the cryptographic binding mechanism functions correctly regardless of performance distribution across partitions. This validates the core security property that providers cannot manipulate test selection to artificially inflate scores.
+
+### 6.3 Computational Performance Analysis
+
+The computational feasibility of cryptographic evaluation depends critically on proof generation time, memory requirements, and verification latency. Table 3 presents detailed performance metrics across all evaluation runs, establishing empirical bounds for practical deployment.
+
+### Table 3: Computational Performance Metrics
+
+| Model | Run | Total Time (s) | Agent Exec (s) | ZK Proof Gen (s) | Proof % of Total | Peak RSS (GB) | RSS Delta (GB) |
+|-------|-----|----------------|----------------|------------------|------------------|---------------|----------------|
+| Codestral-latest | 1 | 165.2 | 50.7 | 114.5 | 69.3% | 13.6 | 13.3 |
+| Codestral-latest | 2 | 152.1 | 41.8 | 110.3 | 72.5% | 14.3 | 14.2 |
+| Codestral-latest | 3 | 158.9 | 45.4 | 113.5 | 71.4% | 14.7 | 12.9 |
+| Claude 4.5 Haiku | 1 | 290.3 | 175.7 | 114.6 | 39.5% | 14.3 | 10.3 |
+| Claude 4.5 Haiku | 2 | 294.3 | 180.3 | 114.0 | 38.7% | 14.0 | 11.5 |
+| Claude 4.5 Haiku | 3 | 260.9 | 146.9 | 114.0 | 43.7% | 13.1 | 10.1 |
+| GPT-5-mini | 1 | 474.0 | 362.3 | 111.7 | 23.6% | 12.4 | 10.7 |
+| GPT-5-mini | 2 | 485.7 | 369.3 | 116.4 | 24.0% | 10.8 | 9.96 |
+| GPT-5-mini | 3 | 547.9 | 429.2 | 118.7 | 21.7% | 12.3 | 12.1 |
+
+Proof generation time demonstrated remarkable consistency across all models and runs, ranging from 110.3 to 118.7 seconds with mean duration of 113.9 seconds and standard deviation of 2.4 seconds. This consistency reflects the fact that proof generation time depends primarily on circuit size and test count rather than model characteristics or evaluation outcomes. The fixed circuit architecture supporting up to one thousand tests with depth ten Merkle trees exhibits predictable computational complexity regardless of which specific AI system is being evaluated. This property enables accurate cost estimation for deployment planning, as proof generation overhead scales with benchmark size rather than with model-specific factors.
+
+The relationship between proof generation time and total evaluation time varies substantially across models due to differences in agent execution latency. For Codestral-latest, proof generation consumed approximately 70 percent of total evaluation time, with agent execution completing rapidly due to the model's specialized optimization for code generation tasks. Claude 4.5 Haiku exhibited roughly 40 percent proof overhead as longer agent execution times for reasoning and code synthesis reduced the relative proportion of cryptographic operations. GPT-5-mini showed the lowest relative proof overhead at approximately 23 percent, reflecting substantial agent execution time that dominated the end-to-end pipeline. These proportions demonstrate that for fast inference systems, proof generation represents the dominant computational cost, while for slower or more deliberative models, agent execution remains the primary bottleneck.
+
+Memory requirements proved manageable on consumer hardware across all configurations. Peak resident set size ranged from 10.8 to 14.7 gigabytes, comfortably within the thirty-six gigabyte physical memory capacity of the test system. The memory delta between baseline and peak measurements indicates actual allocation for proof generation infrastructure, with values ranging from 9.96 to 14.2 gigabytes. The variation in memory consumption across runs likely reflects differences in garbage collection timing and Node.js heap management rather than fundamental algorithmic factors. The consistent memory footprint below sixteen gigabytes establishes that cryptographic evaluation remains accessible on mid-range workstations without requiring server-class infrastructure.
+
+The external and array buffer memory allocation, consistently measured at approximately 8.1 gigabytes across all runs, represents the witness data structures and circuit constraints maintained during proof generation. This allocation remains constant regardless of model or evaluation outcomes because it derives from the fixed circuit architecture. The ability to generate proofs for one hundred sixty-four tests with peak memory under fifteen gigabytes suggests that scaling to larger benchmarks approaching the one thousand test circuit capacity would remain feasible within common sixty-four gigabyte workstation configurations.
+
+### 6.4 Proof System Validation
+
+The dual-proof architecture requires successful generation and verification of both subset and main circuit proofs with appropriate cryptographic binding between them. Table 4 summarizes proof system metrics demonstrating successful operation across all evaluation runs.
+
+### Table 4: Proof System Summary Statistics
+
+| Model | Runs | Total Proofs | Proof Failures | Placeholder Proofs | Mean Proof Time (s) | Public Tests | Public % |
+|-------|------|--------------|----------------|--------------------|--------------------|--------------|----------|
+| Codestral-latest | 3 | 3 | 0 | 0 | 112.8 | 9 | 5.49% |
+| Claude 4.5 Haiku | 3 | 3 | 0 | 0 | 114.2 | 9 | 5.49% |
+| GPT-5-mini | 3 | 3 | 0 | 0 | 115.6 | 9 | 5.49% |
+
+All nine evaluation runs across three models successfully generated valid cryptographic proofs with zero failures. This perfect success rate validates the robustness of the circuit implementations and proof generation pipeline under varying test conditions and model behaviors. The absence of placeholder proofs confirms that all experiments utilized the production Groth16 proving system with full cryptographic security guarantees rather than development testing modes that bypass proof generation for rapid iteration.
+
+The consistent public subset size of nine tests representing 5.49 percent of the benchmark remained identical across all runs due to deterministic test selection based on cryptographic hashing. This consistency enables fair comparison of proof generation performance across models, as all evaluations processed identical circuit input sizes. The partition ratio strikes a balance between providing sufficient empirical validation through public tests while protecting the majority of benchmark content from exposure that could facilitate overfitting or gaming.
+
+The proof protocol identifier of groth16-dual appeared uniformly across all experiments, confirming that the dual-circuit architecture with cryptographic binding between subset and main proofs operated correctly in all cases. The verification keys generated during the trusted setup ceremony successfully validated all proofs, establishing that the pairing-based verification algorithm correctly confirmed computational integrity for both circuits across diverse evaluation scenarios.
+
+### 6.5 System Requirements Analysis
+
+Practical deployment of cryptographic evaluation frameworks requires understanding minimum hardware specifications and operational dependencies. Table 5 synthesizes resource requirements based on observed maximum demands across all evaluation runs.
+
+### Table 5: Observed System Requirements
+
+| Resource Category | Specification | Rationale |
+|-------------------|---------------|-----------|
+| Minimum RAM | 18 GB available | Maximum observed RSS delta of 14.2 GB plus 25% safety margin for operating system and concurrent processes |
+| Recommended RAM | 32 GB total | Supports proof generation with comfortable headroom for system operations and multiple concurrent tasks |
+| CPU Architecture | 64-bit ARM or x86-64 | Required for Node.js runtime and cryptographic libraries with elliptic curve operations |
+| Storage | 30 GB available | Compiled circuit files, Powers of Tau ceremony parameters, verification keys, and proof packages consume approximately 28 GB, with additional space for evaluation outputs |
+| Network Access | Required for API-based models | Agent execution requires connectivity to model providers (Anthropic, OpenAI, Mistral) |
+| Software Dependencies | Python 3 interpreter | HumanEval benchmark requires Python for test execution and code validation |
+| Operating System | Linux, macOS, or Windows | Framework supports all major platforms with Node.js compatibility |
+
+The minimum RAM specification of eighteen gigabytes derives from the maximum observed memory delta of 14.2 gigabytes during proof generation, augmented by a twenty-five percent safety margin to accommodate operating system overhead, concurrent background processes, and potential variance in memory allocation patterns. This requirement positions cryptographic evaluation as accessible on mid-range workstations and high-end laptops rather than requiring server-class hardware. Organizations with existing computational infrastructure for AI development likely already possess suitable hardware for deploying this framework.
+
+The recommended thirty-two gigabyte total memory configuration provides comfortable headroom for proof generation while supporting concurrent development activities, multiple browser tabs, integrated development environments, and other typical software engineering tools. This specification aligns with common developer workstation configurations, minimizing incremental hardware investment required for adoption. Systems with sixty-four gigabytes would support larger benchmarks approaching the one thousand test circuit capacity with similar operational margins.
+
+Network access requirements vary by deployment scenario. Evaluations using API-based models necessarily require connectivity to provider endpoints for agent execution, with latency and bandwidth depending on model complexity and API response times. Evaluations using locally-deployed open-weight models eliminate network dependencies for agent execution, though proof generation and verification remain purely local operations. Organizations with strict network isolation requirements can achieve fully offline evaluation by deploying open models locally and performing all cryptographic operations without external connectivity.
+
+The software dependency on Python 3 reflects the HumanEval benchmark's implementation rather than framework requirements. Alternative benchmarks with different execution environments would impose corresponding dependencies. The framework itself operates within the Node.js runtime without requiring specialized cryptographic software beyond the snarkjs library and its dependencies. This minimal software stack simplifies deployment and reduces potential incompatibilities or version conflicts.
+
+Storage requirements merit particular attention as the compiled circuit files and cryptographic parameters consume substantial disk space. The circuit compilation artifacts including the WebAssembly modules, R1CS constraint systems, and proving keys total approximately twelve gigabytes for both the main and subset circuits. The Powers of Tau ceremony parameters, which provide the cryptographic foundation for the trusted setup, add approximately sixteen gigabytes. Together with verification keys and evaluation outputs, a complete deployment requires approximately thirty gigabytes of available storage. This requirement exceeds typical expectations for evaluation frameworks but remains modest compared to storage demands for large language model weights or extensive training datasets. The one-time nature of circuit compilation means that storage costs are fixed rather than growing with evaluation volume.
+
+### 6.6 Proof Package Availability and Reproducibility
+
+To facilitate independent verification and enable reproducibility of the experimental results, all proof packages generated during the evaluation experiments have been made publicly available in the project repository. The complete proof packages for all nine evaluation runs across three models are archived at `examples/humaneval/output` in the GitHub repository. Each proof package contains the dual cryptographic proofs (subset circuit and main circuit), verification keys enabling independent proof validation, public inputs including Merkle roots and aggregate scores, complete test content for the public subset enabling empirical validation, and metadata documenting evaluation configuration and system characteristics.
+
+The availability of these proof packages enables several forms of independent validation. First, any researcher can verify the cryptographic proofs using standard Groth16 verifiers and the included verification keys, confirming mathematical soundness without requiring trust in the evaluation provider. Second, researchers can reproduce evaluation on the public test subset by executing the same models on the revealed test cases, validating empirical accuracy through direct observation. Third, researchers can examine the proof structure and public inputs to understand how the dual-circuit architecture binds subset and main proofs through shared commitments. Fourth, researchers can use these proof packages as templates for conducting their own cryptographic evaluations on different models or benchmarks.
+
+The proof packages serve as concrete artifacts demonstrating practical viability of the cryptographic evaluation framework. The packages remain compact with total size under one hundred kilobytes per evaluation run despite encoding complete cryptographic proofs and verification keys. This lightweight footprint enables efficient distribution through version control systems and long-term archival in research repositories. The standardized JSON format ensures interoperability with verification tools and facilitates automated processing by benchmark leaderboards or evaluation platforms.
+
+The public availability of proof packages exemplifies the transparency properties enabled by the cryptographic approach. Unlike traditional private benchmark evaluation where verification requires trusting institutional evaluators, cryptographic proofs provide mathematical artifacts that anyone can verify independently. This shift from institutional trust to cryptographic verifiability represents a fundamental advancement in AI evaluation methodology, enabling decentralized verification while maintaining benchmark integrity through selective disclosure rather than complete opacity.
 
 
 ## References
