@@ -6,44 +6,36 @@ import { performance } from 'perf_hooks';
 import { fileURLToPath } from 'url';
 import {
   ResearchVerifier,
-  CustomProvider,
-  ProviderConfigError,
-  HumanEvalScorer
-} from '../src/index.js';
+  AnthropicChatProvider,
+  HumanEvalScorer,
+  ProviderConfigError
+} from '../../src/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const HUMAN_EVAL_PATH = path.join(__dirname, '../benchmarks/humaneval/humaneval.jsonl');
-const MISTRAL_API_URL = 'https://api.mistral.ai/v1/chat/completions';
+const HUMAN_EVAL_PATH = path.join(__dirname, '../../benchmarks/humaneval/humaneval.jsonl');
 
 const DEFAULT_SYSTEM_PROMPT = [
-  'You are an expert Python developer completing the HumanEval benchmark.',
+  'You are an expert Python developer.',
   'Follow the provided signature exactly and return only valid Python code without commentary or fences.',
   'Ensure the function passes the hidden unit tests.'
 ].join(' ');
 
-const DEFAULT_MODEL = process.env.MISTRAL_MODEL || 'codestral-latest';
-const DEFAULT_TEMPERATURE = parseOptionalFloat(process.env.MISTRAL_TEMPERATURE, 0);
-const DEFAULT_MAX_TOKENS = parseOptionalInt(process.env.MISTRAL_MAX_TOKENS, 512);
+const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5';
+const DEFAULT_TEMPERATURE = parseOptionalFloat(process.env.ANTHROPIC_TEMPERATURE, 0);
 const HUMAN_EVAL_LIMIT = parseOptionalInt(process.env.HUMAN_EVAL_LIMIT, null);
 const HUMAN_EVAL_TIMEOUT_MS = parseOptionalInt(process.env.HUMAN_EVAL_TIMEOUT_MS, 15000);
 const HUMAN_EVAL_PYTHON = process.env.HUMAN_EVAL_PYTHON || 'python3';
 
-const MISTRAL_REQUEST_TIMEOUT_MS = parseOptionalInt(process.env.MISTRAL_REQUEST_TIMEOUT_MS, 60000);
-
 function parseOptionalInt(value, fallback) {
-  if (value === undefined || value === null || value === '') {
-    return fallback;
-  }
+  if (value === undefined || value === null || value === '') return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function parseOptionalFloat(value, fallback) {
-  if (value === undefined || value === null || value === '') {
-    return fallback;
-  }
+  if (value === undefined || value === null || value === '') return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
@@ -68,12 +60,10 @@ function formatBytes(bytes) {
   let value = Math.abs(bytes);
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let unitIndex = 0;
-
   while (value >= 1024 && unitIndex < units.length - 1) {
     value /= 1024;
     unitIndex += 1;
   }
-
   const decimals = value >= 10 || unitIndex === 0 ? 1 : 2;
   return `${sign}${value.toFixed(decimals)} ${units[unitIndex]}`;
 }
@@ -87,16 +77,13 @@ function formatNumber(value, fractionDigits = 2) {
 }
 
 function formatPercentage(part, total) {
-  if (!Number.isFinite(part) || !Number.isFinite(total) || total === 0) {
-    return 'N/A';
-  }
+  if (!Number.isFinite(part) || !Number.isFinite(total) || total === 0) return 'N/A';
   return `${((part / total) * 100).toFixed(2)}%`;
 }
 
 function collectSystemProfile() {
   const cpus = os.cpus() || [];
   const primaryCpu = cpus[0] || {};
-
   return {
     platform: `${process.platform} ${process.arch}`,
     release: os.release(),
@@ -162,9 +149,7 @@ function reportBenchmarkSummary({
   console.log(`  RSS baseline → final: ${formatBytes(memoryStart.rss)} → ${formatBytes(memoryEnd.rss)} (Δ ${formatBytes(rssDelta)})`);
   console.log(`  Heap used change: ${formatBytes(heapDelta)} (final ${formatBytes(memoryEnd.heapUsed)})`);
   if (externalDelta || arrayBuffersDelta) {
-    console.log(
-      `  External/ArrayBuffers Δ: ${formatBytes(externalDelta)} / ${formatBytes(arrayBuffersDelta)}`
-    );
+    console.log(`  External/ArrayBuffers Δ: ${formatBytes(externalDelta)} / ${formatBytes(arrayBuffersDelta)}`);
   }
   if (proofStats.rssPeakBytes) {
     console.log(`  Peak RSS observed during proofs: ${formatBytes(proofStats.rssPeakBytes)}`);
@@ -184,126 +169,29 @@ function reportBenchmarkSummary({
   console.log('\nObserved System Requirements:');
   const observedPeak = proofStats.rssPeakBytes || memoryEnd.rss;
   console.log(`  Minimum RAM headroom suggested: ≥ ${formatBytes(observedPeak * 1.25)}`);
-  console.log(`  Network access: required for Mistral API (latency bound on agent execution)`);
+  console.log(`  Network access: required for Anthropic API (latency bound on agent execution)`);
   console.log(`  Deterministic tooling: python interpreter at ${HUMAN_EVAL_PYTHON} for HumanEval tests`);
 
   console.log('\nUse these measurements when reporting state-of-the-art benchmark results.');
   console.log('='.repeat(60) + '\n');
 }
 
-/**
- * Call the Mistral chat completion API.
- * @param {string} apiKey
- * @param {object} payload
- * @returns {Promise<object>}
- */
-async function callMistral(apiKey, payload) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), MISTRAL_REQUEST_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(MISTRAL_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Mistral API error (${response.status}): ${errorText}`);
-    }
-
-    return response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-class MistralAgentProvider extends CustomProvider {
-  constructor(config) {
-    super({ name: 'mistral-custom-agent' });
-    this.apiKey = config.apiKey;
-    this.model = config.model || DEFAULT_MODEL;
-    this.temperature = config.temperature ?? DEFAULT_TEMPERATURE;
-    this.systemPrompt = config.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-    this.maxTokens = config.maxTokens || DEFAULT_MAX_TOKENS;
-
-    if (!this.apiKey) {
-      throw new ProviderConfigError('Mistral API key is required for the agent provider');
-    }
-  }
-
-  getName() {
-    return 'mistral-custom-agent';
-  }
-
-  async execute(prompt, context) {
-    context.setProvider(this.getName(), this.getVersion());
-
-    const payload = {
-      model: this.model,
-      temperature: this.temperature,
-      max_tokens: this.maxTokens,
-      messages: [
-        { role: 'system', content: this.systemPrompt },
-        { role: 'user', content: prompt }
-      ]
-    };
-
-    try {
-      const data = await callMistral(this.apiKey, payload);
-      const output = data.choices?.[0]?.message?.content?.trim();
-
-      if (!output) {
-        throw new Error('Received empty response from Mistral');
-      }
-
-      context.logToolCall({
-        toolName: 'mistral.chat',
-        toolInput: { prompt, model: this.model, temperature: this.temperature, maxTokens: this.maxTokens },
-        toolOutput: output
-      });
-
-      context.complete({ output });
-      return output;
-    } catch (error) {
-      context.fail(error);
-      throw this._wrapError(error);
-    }
-  }
-}
-
 async function loadHumanEvalTasks(limit) {
   const datasetRaw = await fs.readFile(HUMAN_EVAL_PATH, 'utf8');
-  const lines = datasetRaw
-    .split('\n')
-    .map(line => line.trim())
-    .filter(Boolean);
-
+  const lines = datasetRaw.split('\n').map(l => l.trim()).filter(Boolean);
   const tasks = [];
   for (const line of lines) {
     const parsed = JSON.parse(line);
     tasks.push(parsed);
-    if (limit && tasks.length >= limit) {
-      break;
-    }
+    if (limit && tasks.length >= limit) break;
   }
-
-  if (tasks.length === 0) {
-    throw new Error('No HumanEval tasks found in dataset');
-  }
-
+  if (tasks.length === 0) throw new Error('No HumanEval tasks found in dataset');
   return tasks;
 }
 
 function buildHumanEvalPrompt(task) {
   return [
-    'Complete the following Python function so that it satisfies the specification.',
-    'Return only the implementation without additional explanations or code fences.',
+    DEFAULT_SYSTEM_PROMPT,
     '',
     task.prompt.trim(),
     '',
@@ -312,13 +200,13 @@ function buildHumanEvalPrompt(task) {
 }
 
 async function main() {
-  console.log('Research Library - Mistral HumanEval Example');
+  console.log('Research Library - Anthropic Claude HumanEval');
   console.log('='.repeat(60));
   console.log();
 
-  if (!process.env.MISTRAL_API_KEY) {
-    console.error('Error: MISTRAL_API_KEY environment variable is required.');
-    console.error('Create a .env file with: MISTRAL_API_KEY=your-api-key');
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.error('Error: ANTHROPIC_API_KEY environment variable is required.');
+    console.error('Create a .env file with: ANTHROPIC_API_KEY=your-api-key');
     process.exit(1);
   }
 
@@ -348,13 +236,9 @@ async function main() {
 
   const datasetStats = (() => {
     const totalTasks = testSuite.length || 1;
-    const totalPromptChars = testSuite.reduce((sum, test) => sum + (test.prompt?.length || 0), 0);
-    const totalSolutionChars = tasks.reduce((sum, task) => sum + (task.canonical_solution?.length || 0), 0);
-    const totalTestLines = tasks.reduce((sum, task) => {
-      const lines = task.test ? task.test.split('\n').length : 0;
-      return sum + lines;
-    }, 0);
-
+    const totalPromptChars = testSuite.reduce((sum, t) => sum + (t.prompt?.length || 0), 0);
+    const totalSolutionChars = tasks.reduce((sum, t) => sum + (t.canonical_solution?.length || 0), 0);
+    const totalTestLines = tasks.reduce((sum, t) => sum + (t.test ? t.test.split('\n').length : 0), 0);
     return {
       totalTasks: testSuite.length,
       avgPromptChars: totalPromptChars / totalTasks,
@@ -365,12 +249,12 @@ async function main() {
 
   const systemProfile = collectSystemProfile();
 
-  const agentProvider = new MistralAgentProvider({
-    apiKey: process.env.MISTRAL_API_KEY,
+  const agentProvider = new AnthropicChatProvider({
+    apiKey: process.env.ANTHROPIC_API_KEY,
     model: DEFAULT_MODEL,
+    systemPrompt: process.env.ANTHROPIC_SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT,
     temperature: DEFAULT_TEMPERATURE,
-    systemPrompt: process.env.MISTRAL_SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT,
-    maxTokens: DEFAULT_MAX_TOKENS
+    maxTokens: parseOptionalInt(process.env.ANTHROPIC_MAX_TOKENS, 3000)
   });
 
   const scorerProvider = new HumanEvalScorer({
@@ -385,7 +269,7 @@ async function main() {
     outputDir: './output',
     parallelConfig: {
       enabled: true,
-      maxConcurrent: parseOptionalInt(process.env.HUMAN_EVAL_CONCURRENCY, 2)
+      maxConcurrent: parseOptionalInt(process.env.HUMAN_EVAL_CONCURRENCY, 5)
     }
   });
 
@@ -394,28 +278,16 @@ async function main() {
     totalStart: performance.now(),
     memoryStart: process.memoryUsage(),
     resourceStart: supportsResourceUsage ? process.resourceUsage() : null,
-    proof: {
-      calls: 0,
-      totalTimeMs: 0,
-      maxTimeMs: 0,
-      placeholderRuns: 0,
-      failures: 0,
-      rssPeakBytes: 0,
-      maxDeltaBytes: 0,
-      lastProtocol: null
-    }
+    proof: { calls: 0, totalTimeMs: 0, maxTimeMs: 0, placeholderRuns: 0, failures: 0, rssPeakBytes: 0, maxDeltaBytes: 0, lastProtocol: null }
   };
   benchmark.proof.rssPeakBytes = benchmark.memoryStart.rss;
 
   const originalGenerateDualProof = verifier.proofGenerator.generateDualProof.bind(verifier.proofGenerator);
-
   verifier.proofGenerator.generateDualProof = async (...args) => {
     benchmark.proof.calls += 1;
     const proofStart = performance.now();
     const rssBefore = process.memoryUsage().rss;
-    let proofResult;
-    let succeeded = false;
-
+    let proofResult; let succeeded = false;
     try {
       proofResult = await originalGenerateDualProof(...args);
       succeeded = true;
@@ -423,22 +295,14 @@ async function main() {
       const durationMs = performance.now() - proofStart;
       const rssAfter = process.memoryUsage().rss;
       const deltaBytes = rssAfter - rssBefore;
-
       benchmark.proof.totalTimeMs += durationMs;
       benchmark.proof.maxTimeMs = Math.max(benchmark.proof.maxTimeMs, durationMs);
       benchmark.proof.rssPeakBytes = Math.max(benchmark.proof.rssPeakBytes, rssAfter);
       benchmark.proof.maxDeltaBytes = Math.max(benchmark.proof.maxDeltaBytes, Math.abs(deltaBytes));
-      if (proofResult?.protocol) {
-        benchmark.proof.lastProtocol = proofResult.protocol;
-      }
-      if (proofResult?.isPlaceholder) {
-        benchmark.proof.placeholderRuns += 1;
-      }
-      if (!succeeded) {
-        benchmark.proof.failures += 1;
-      }
+      if (proofResult?.protocol) benchmark.proof.lastProtocol = proofResult.protocol;
+      if (proofResult?.isPlaceholder) benchmark.proof.placeholderRuns += 1;
+      if (!succeeded) benchmark.proof.failures += 1;
     }
-
     return proofResult;
   };
 
@@ -460,13 +324,11 @@ async function main() {
     console.log(`🔍 Public Subset Pass Rate: ${result.subset.score.toFixed(2)}%`);
     console.log(`⏱️  Execution Time: ${(result.full.executionTime / 1000).toFixed(2)}s`);
     console.log();
-
     if (result.zkProof.isPlaceholder) {
       console.log('⚠️  WARNING: Placeholder proofs detected!');
       console.log('   Compile circuits before using this in production.');
       console.log();
     }
-
     console.log('✅ Verification complete!');
     console.log('='.repeat(60));
 

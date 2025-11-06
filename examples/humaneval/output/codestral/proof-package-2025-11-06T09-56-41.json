@@ -1,0 +1,500 @@
+{
+  "full": {
+    "merkleRoot": "20766982316505953249972006382263357715242993414843172193987240797587297619313",
+    "score": 57.31707317073171,
+    "totalScore": 9400,
+    "numTests": 164,
+    "executionTime": 158830
+  },
+  "subset": {
+    "merkleRoot": "21405275161430024649595930658813503390066214619660621280474301031907962227337",
+    "score": 66.66666666666667,
+    "totalScore": 600,
+    "numTests": 9,
+    "publicIndices": [
+      5,
+      10,
+      15,
+      16,
+      43,
+      78,
+      105,
+      116,
+      163
+    ],
+    "publicData": [
+      {
+        "testId": "HumanEval/5",
+        "prompt": "Complete the following Python function so that it satisfies the specification.\nReturn only the implementation without additional explanations or code fences.\n\nfrom typing import List\n\n\ndef intersperse(numbers: List[int], delimeter: int) -> List[int]:\n    \"\"\" Insert a number 'delimeter' between every two consecutive elements of input list `numbers' \"\"\"\n\n# Your solution:",
+        "idealOutput": "if not numbers:\n        return []\n\n    result = []\n\n    for n in numbers[:-1]:\n        result.append(n)\n        result.append(delimeter)\n\n    result.append(numbers[-1])\n\n    return result",
+        "agentOutput": "def intersperse(numbers: List[int], delimeter: int) -> List[int]:\n    result = []\n    for i, num in enumerate(numbers):\n        result.append(num)\n        if i != len(numbers) - 1:\n            result.append(delimeter)\n    return result",
+        "score": false,
+        "scoringType": "binary",
+        "success": false
+      },
+      {
+        "testId": "HumanEval/10",
+        "prompt": "Complete the following Python function so that it satisfies the specification.\nReturn only the implementation without additional explanations or code fences.\n\ndef is_palindrome(string: str) -> bool:\n    \"\"\" Test if given string is a palindrome \"\"\"\n    return string == string[::-1]\n\n\ndef make_palindrome(string: str) -> str:\n    \"\"\" Find the shortest palindrome that begins with a supplied string.\n    Algorithm idea is simple:\n    - Find the longest postfix of supplied string that is a palindrome.\n    - Append to the end of the string reverse of a string prefix that comes before the palindromic suffix. \"\"\"\n\n# Your solution:",
+        "idealOutput": "if not string:\n        return ''\n\n    beginning_of_suffix = 0\n\n    while not is_palindrome(string[beginning_of_suffix:]):\n        beginning_of_suffix += 1\n\n    return string + string[:beginning_of_suffix][::-1]",
+        "agentOutput": "def make_palindrome(string: str) -> str:\n    if not string:\n        return string\n    for i in range(len(string)):\n        if is_palindrome(string[i:]):\n            return string + string[:i][::-1]\n    return string + string[:-1][::-1]",
+        "score": false,
+        "scoringType": "binary",
+        "success": false
+      },
+      {
+        "testId": "HumanEval/15",
+        "prompt": "Complete the following Python function so that it satisfies the specification.\nReturn only the implementation without additional explanations or code fences.\n\ndef string_sequence(n: int) -> str:\n    \"\"\" Return a string containing space-delimited numbers starting from 0 upto n inclusive. \"\"\"\n\n# Your solution:",
+        "idealOutput": "return ' '.join([str(x) for x in range(n + 1)])",
+        "agentOutput": "def string_sequence(n: int) -> str:\n    \"\"\" Return a string containing space-delimited numbers starting from 0 upto n inclusive. \"\"\"\n    return ' '.join(str(i) for i in range(n + 1))",
+        "score": true,
+        "scoringType": "binary",
+        "success": true
+      },
+      {
+        "testId": "HumanEval/16",
+        "prompt": "Complete the following Python function so that it satisfies the specification.\nReturn only the implementation without additional explanations or code fences.\n\ndef count_distinct_characters(string: str) -> int:\n    \"\"\" Given a string, find out how many distinct characters (regardless of case) does it consist of \"\"\"\n\n# Your solution:",
+        "idealOutput": "return len(set(string.lower()))",
+        "agentOutput": "def count_distinct_characters(string: str) -> int:\n    \"\"\" Given a string, find out how many distinct characters (regardless of case) does it consist of \"\"\"\n    return len(set(string.lower()))",
+        "score": true,
+        "scoringType": "binary",
+        "success": true
+      },
+      {
+        "testId": "HumanEval/43",
+        "prompt": "Complete the following Python function so that it satisfies the specification.\nReturn only the implementation without additional explanations or code fences.\n\ndef pairs_sum_to_zero(l):\n    \"\"\"\n    pairs_sum_to_zero takes a list of integers as an input.\n    it returns True if there are two distinct elements in the list that\n    sum to zero, and False otherwise. \"\"\"\n\n# Your solution:",
+        "idealOutput": "for i, l1 in enumerate(l):\n        for j in range(i + 1, len(l)):\n            if l1 + l[j] == 0:\n                return True\n    return False",
+        "agentOutput": "def pairs_sum_to_zero(l):\n    seen = set()\n    for num in l:\n        if -num in seen:\n            return True\n        seen.add(num)\n    return False",
+        "score": true,
+        "scoringType": "binary",
+        "success": true
+      },
+      {
+        "testId": "HumanEval/78",
+        "prompt": "Complete the following Python function so that it satisfies the specification.\nReturn only the implementation without additional explanations or code fences.\n\ndef hex_key(num):\n    \"\"\"You have been tasked to write a function that receives \n    a hexadecimal number as a string and counts the number of hexadecimal \n    digits that are primes (prime number, or a prime, is a natural number \n    greater than 1 that is not a product of two smaller natural numbers).\n    Hexadecimal digits are 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, A, B, C, D, E, F.\n    Prime numbers are 2, 3, 5, 7, 11, 13, 17,...\n    So you have to determine a number of the following digits: 2, 3, 5, 7, \n    B (=decimal 11), D (=decimal 13).\n    Note: you may assume the input is always correct or empty string, \n    and symbols A,B,C,D,E,F are always uppercase. \"\"\"\n\n# Your solution:",
+        "idealOutput": "primes = ('2', '3', '5', '7', 'B', 'D')\n    total = 0\n    for i in range(0, len(num)):\n        if num[i] in primes:\n            total += 1\n    return total",
+        "agentOutput": "def hex_key(num):\n    prime_digits = {'2', '3', '5', '7', 'B', 'D'}\n    count = 0\n    for digit in num:\n        if digit in prime_digits:\n            count += 1\n    return count",
+        "score": true,
+        "scoringType": "binary",
+        "success": true
+      },
+      {
+        "testId": "HumanEval/105",
+        "prompt": "Complete the following Python function so that it satisfies the specification.\nReturn only the implementation without additional explanations or code fences.\n\ndef by_length(arr):\n    \"\"\"\n    Given an array of integers, sort the integers that are between 1 and 9 inclusive,\n    reverse the resulting array, and then replace each digit by its corresponding name from\n    \"One\", \"Two\", \"Three\", \"Four\", \"Five\", \"Six\", \"Seven\", \"Eight\", \"Nine\". \"\"\"\n\n# Your solution:",
+        "idealOutput": "dic = {\n        1: \"One\",\n        2: \"Two\",\n        3: \"Three\",\n        4: \"Four\",\n        5: \"Five\",\n        6: \"Six\",\n        7: \"Seven\",\n        8: \"Eight\",\n        9: \"Nine\",\n    }\n    sorted_arr = sorted(arr, reverse=True)\n    new_arr = []\n    for var in sorted_arr:\n        try:\n            new_arr.append(dic[var])\n        except:\n            pass\n    return new_arr",
+        "agentOutput": "def by_length(arr):\n    digit_names = [\"One\", \"Two\", \"Three\", \"Four\", \"Five\", \"Six\", \"Seven\", \"Eight\", \"Nine\"]\n    filtered = [x for x in arr if 1 <= x <= 9]\n    filtered.sort()\n    filtered.reverse()\n    return [digit_names[x-1] for x in filtered]",
+        "score": true,
+        "scoringType": "binary",
+        "success": true
+      },
+      {
+        "testId": "HumanEval/116",
+        "prompt": "Complete the following Python function so that it satisfies the specification.\nReturn only the implementation without additional explanations or code fences.\n\ndef sort_array(arr):\n    \"\"\"\n    In this Kata, you have to sort an array of non-negative integers according to\n    number of ones in their binary representation in ascending order.\n    For similar number of ones, sort based on decimal value.\n\n    It must be implemented like this. \"\"\"\n\n# Your solution:",
+        "idealOutput": "return sorted(sorted(arr), key=lambda x: bin(x)[2:].count('1'))",
+        "agentOutput": "def sort_array(arr):\n    return sorted(arr, key=lambda x: (bin(x).count('1'), x))",
+        "score": true,
+        "scoringType": "binary",
+        "success": true
+      },
+      {
+        "testId": "HumanEval/163",
+        "prompt": "Complete the following Python function so that it satisfies the specification.\nReturn only the implementation without additional explanations or code fences.\n\ndef generate_integers(a, b):\n    \"\"\"\n    Given two positive integers a and b, return the even digits between a\n    and b, in ascending order. \"\"\"\n\n# Your solution:",
+        "idealOutput": "lower = max(2, min(a, b))\n    upper = min(8, max(a, b))\n\n    return [i for i in range(lower, upper+1) if i % 2 == 0]",
+        "agentOutput": "def generate_integers(a, b):\n    \"\"\"\n    Given two positive integers a and b, return the even digits between a\n    and b, in ascending order. \"\"\"\n    even_digits = []\n    for num in range(a, b + 1):\n        for digit in str(num):\n            digit = int(digit)\n            if digit % 2 == 0 and digit not in even_digits:\n                even_digits.append(digit)\n    even_digits.sort()\n    return even_digits",
+        "score": false,
+        "scoringType": "binary",
+        "success": false
+      }
+    ]
+  },
+  "zkProof": {
+    "mainProof": {
+      "proof": {
+        "pi_a": [
+          "17048005580233288099652723388919582128037579265679353269665346149871049079573",
+          "15248342145169182077071797751731535649732613192086370639318767891699724674801",
+          "1"
+        ],
+        "pi_b": [
+          [
+            "13732745557347951280986428157958996723129623979697481513937512052264762427894",
+            "21394849601222130083097571569241049632878731790230593028364904484000921671658"
+          ],
+          [
+            "15562931396804878909512319286449444098346387605704053154010154647071007351674",
+            "18025111522974980942536429863886669339280387631661178740788769301335993288349"
+          ],
+          [
+            "1",
+            "0"
+          ]
+        ],
+        "pi_c": [
+          "11307814092813642676995430524888745537957074811746672881019548430978844367782",
+          "16857313497142581052343235304556766791562538817130644600349655924097474051692",
+          "1"
+        ],
+        "protocol": "groth16",
+        "curve": "bn128"
+      },
+      "publicSignals": [
+        "20766982316505953249972006382263357715242993414843172193987240797587297619313",
+        "20133463936985753614542856243612421195026232763253024301945652337828809428214",
+        "9204681961134665972437625000364566915198507716272501649404003525090903119591",
+        "15113711712070289691869466867616262951547141434752175263798781892034168304952",
+        "9400",
+        "164",
+        "21405275161430024649595930658813503390066214619660621280474301031907962227337",
+        "600",
+        "9"
+      ],
+      "verificationKey": {
+        "protocol": "groth16",
+        "curve": "bn128",
+        "nPublic": 9,
+        "vk_alpha_1": [
+          "1",
+          "2",
+          "1"
+        ],
+        "vk_beta_2": [
+          [
+            "10857046999023057135944570762232829481370756359578518086990519993285655852781",
+            "11559732032986387107991004021392285783925812861821192530917403151452391805634"
+          ],
+          [
+            "8495653923123431417604973247489272438418190587263600148770280649306958101930",
+            "4082367875863433681332203403145435568316851327593401208105741076214120093531"
+          ],
+          [
+            "1",
+            "0"
+          ]
+        ],
+        "vk_gamma_2": [
+          [
+            "10857046999023057135944570762232829481370756359578518086990519993285655852781",
+            "11559732032986387107991004021392285783925812861821192530917403151452391805634"
+          ],
+          [
+            "8495653923123431417604973247489272438418190587263600148770280649306958101930",
+            "4082367875863433681332203403145435568316851327593401208105741076214120093531"
+          ],
+          [
+            "1",
+            "0"
+          ]
+        ],
+        "vk_delta_2": [
+          [
+            "5937513106539680319606024659396618647923662173399812331364207267825607261030",
+            "16069920345777759563278645105750650288621290889864344799557555789678415578409"
+          ],
+          [
+            "14557520710989554224528129622559951441615164989929850889248234646961857086336",
+            "14050757229547248651884528728341155429311229953883257244698332475976445195148"
+          ],
+          [
+            "1",
+            "0"
+          ]
+        ],
+        "vk_alphabeta_12": [
+          [
+            [
+              "17264119758069723980713015158403419364912226240334615592005620718956030922389",
+              "1300711225518851207585954685848229181392358478699795190245709208408267917898"
+            ],
+            [
+              "8894217292938489450175280157304813535227569267786222825147475294561798790624",
+              "1829859855596098509359522796979920150769875799037311140071969971193843357227"
+            ],
+            [
+              "4968700049505451466697923764727215585075098085662966862137174841375779106779",
+              "12814315002058128940449527172080950701976819591738376253772993495204862218736"
+            ]
+          ],
+          [
+            [
+              "4233474252585134102088637248223601499779641130562251948384759786370563844606",
+              "9420544134055737381096389798327244442442230840902787283326002357297404128074"
+            ],
+            [
+              "13457906610892676317612909831857663099224588803620954529514857102808143524905",
+              "5122435115068592725432309312491733755581898052459744089947319066829791570839"
+            ],
+            [
+              "8891987925005301465158626530377582234132838601606565363865129986128301774627",
+              "440796048150724096437130979851431985500142692666486515369083499585648077975"
+            ]
+          ]
+        ],
+        "IC": [
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ]
+        ]
+      },
+      "protocol": "groth16",
+      "curve": "bn128",
+      "commitments": {
+        "logsCommitment": "21405275161430024649595930658813503390066214619660621280474301031907962227337",
+        "libraryVersion": "600",
+        "scoringMethod": "9"
+      }
+    },
+    "subsetProof": {
+      "proof": {
+        "pi_a": [
+          "4450244758892724298589289050040127116630416211035948957389610934469918298624",
+          "19782480227997029997829833041335969292427109551818276824547709131938492147847",
+          "1"
+        ],
+        "pi_b": [
+          [
+            "7876873029151597992335003092484716917296362766061488324133291097960812936619",
+            "20444704522865070128456982199209660502620045935716242093121586547045695411948"
+          ],
+          [
+            "692712007722709972557417577673389088870515104518459446069480078297195761034",
+            "9765291551562441196838482538809242933972987728512648203946706752289445388045"
+          ],
+          [
+            "1",
+            "0"
+          ]
+        ],
+        "pi_c": [
+          "16314380973691333057244428898020627493095515172671591645859206158330936207132",
+          "5792640846370294824081779089717106417719082873782922726985016114309151680961",
+          "1"
+        ],
+        "protocol": "groth16",
+        "curve": "bn128"
+      },
+      "publicSignals": [
+        "21405275161430024649595930658813503390066214619660621280474301031907962227337",
+        "20766982316505953249972006382263357715242993414843172193987240797587297619313",
+        "600",
+        "9",
+        "20133463936985753614542856243612421195026232763253024301945652337828809428214",
+        "9204681961134665972437625000364566915198507716272501649404003525090903119591"
+      ],
+      "verificationKey": {
+        "protocol": "groth16",
+        "curve": "bn128",
+        "nPublic": 6,
+        "vk_alpha_1": [
+          "1",
+          "2",
+          "1"
+        ],
+        "vk_beta_2": [
+          [
+            "10857046999023057135944570762232829481370756359578518086990519993285655852781",
+            "11559732032986387107991004021392285783925812861821192530917403151452391805634"
+          ],
+          [
+            "8495653923123431417604973247489272438418190587263600148770280649306958101930",
+            "4082367875863433681332203403145435568316851327593401208105741076214120093531"
+          ],
+          [
+            "1",
+            "0"
+          ]
+        ],
+        "vk_gamma_2": [
+          [
+            "10857046999023057135944570762232829481370756359578518086990519993285655852781",
+            "11559732032986387107991004021392285783925812861821192530917403151452391805634"
+          ],
+          [
+            "8495653923123431417604973247489272438418190587263600148770280649306958101930",
+            "4082367875863433681332203403145435568316851327593401208105741076214120093531"
+          ],
+          [
+            "1",
+            "0"
+          ]
+        ],
+        "vk_delta_2": [
+          [
+            "6896827611795073261716683330427969412431683095530528202143280046411333496633",
+            "10524561339256008649799106149995882972944861799930567478690458207893621103732"
+          ],
+          [
+            "14922225983855619815622556566203010348922463246851028646976119807226925170738",
+            "10044719858324558196913810249429714461584330813733223884943127504290919840640"
+          ],
+          [
+            "1",
+            "0"
+          ]
+        ],
+        "vk_alphabeta_12": [
+          [
+            [
+              "17264119758069723980713015158403419364912226240334615592005620718956030922389",
+              "1300711225518851207585954685848229181392358478699795190245709208408267917898"
+            ],
+            [
+              "8894217292938489450175280157304813535227569267786222825147475294561798790624",
+              "1829859855596098509359522796979920150769875799037311140071969971193843357227"
+            ],
+            [
+              "4968700049505451466697923764727215585075098085662966862137174841375779106779",
+              "12814315002058128940449527172080950701976819591738376253772993495204862218736"
+            ]
+          ],
+          [
+            [
+              "4233474252585134102088637248223601499779641130562251948384759786370563844606",
+              "9420544134055737381096389798327244442442230840902787283326002357297404128074"
+            ],
+            [
+              "13457906610892676317612909831857663099224588803620954529514857102808143524905",
+              "5122435115068592725432309312491733755581898052459744089947319066829791570839"
+            ],
+            [
+              "8891987925005301465158626530377582234132838601606565363865129986128301774627",
+              "440796048150724096437130979851431985500142692666486515369083499585648077975"
+            ]
+          ]
+        ],
+        "IC": [
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1",
+            "0"
+          ]
+        ]
+      },
+      "protocol": "groth16",
+      "curve": "bn128"
+    },
+    "isPlaceholder": false,
+    "protocol": "groth16-dual",
+    "publicIndices": [
+      5,
+      10,
+      15,
+      16,
+      43,
+      78,
+      105,
+      116,
+      163
+    ],
+    "publicTests": 9,
+    "commitments": {
+      "fullMerkleRoot": "20766982316505953249972006382263357715242993414843172193987240797587297619313",
+      "subsetMerkleRoot": "21405275161430024649595930658813503390066214619660621280474301031907962227337",
+      "logsCommitment": "21405275161430024649595930658813503390066214619660621280474301031907962227337",
+      "libraryVersion": "600",
+      "scoringMethod": "9",
+      "executionLogsHash": "305578104583986628161664584975851238661957825472219364521931293085767448674",
+      "libraryCodeHash": "56073415837341533273170208714596971194282956659029261268969565551474793992",
+      "scoringMethodHash": "126121050887488827308767323337677833626229357510367815069646023526044020408"
+    },
+    "aggregates": {
+      "fullClaim": "9400",
+      "subsetClaim": "600",
+      "totalTests": "164",
+      "subsetTests": "9"
+    }
+  },
+  "providers": {
+    "agent": {
+      "name": "mistral-custom-agent",
+      "version": "1.0.0"
+    },
+    "scorer": {
+      "name": "human-eval-scorer",
+      "type": "deterministic"
+    }
+  },
+  "metadata": {
+    "timestamp": "2025-11-06T09:56:41.143Z",
+    "libraryVersion": "1.0.0",
+    "testSuiteSize": 164,
+    "publicPercentage": "5.5",
+    "totalScoreSum": 9400,
+    "subsetScoreSum": 600
+  }
+}

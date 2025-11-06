@@ -121,6 +121,12 @@ export class AnthropicProvider extends AgentProvider {
    * @private
    */
   _createLoggingHooks(context) {
+    // Permission behavior: respect sdkOptions.permissionMode when present
+    // - 'rejectAll' | 'deny' => deny all tool uses to speed up
+    // - otherwise default to approve (keeps prior behavior)
+    const mode = (this.sdkOptions?.permissionMode || '').toLowerCase();
+    const deny = mode === 'rejectall' || mode === 'reject' || mode === 'deny' || mode === 'disabled';
+
     return {
       PostToolUse: [{
         hooks: [async (hookInput, toolUseID) => {
@@ -135,8 +141,7 @@ export class AnthropicProvider extends AgentProvider {
       }],
       PreToolUse: [{
         hooks: [async () => {
-          // Auto-approve all tools (configurable via sdkOptions)
-          return { decision: 'approve' };
+          return { decision: deny ? 'deny' : 'approve' };
         }]
       }]
     };

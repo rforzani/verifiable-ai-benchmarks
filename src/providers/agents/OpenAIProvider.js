@@ -98,11 +98,19 @@ export class OpenAIProvider extends AgentProvider {
         model: this.model,
         messages,
         temperature: this.temperature,
-        max_completion_tokens: this.maxTokens,
         top_p: this.topP,
         frequency_penalty: this.frequencyPenalty,
         presence_penalty: this.presencePenalty
       };
+
+      // Some newer models (e.g., gpt-5 family) expect `max_completion_tokens`
+      // while others expect `max_tokens`. Choose based on model name.
+      const useMaxCompletion = typeof this.model === 'string' && this.model.includes('gpt-5');
+      if (useMaxCompletion) {
+        params.max_completion_tokens = this.maxTokens;
+      } else {
+        params.max_tokens = this.maxTokens;
+      }
 
       // Add tools if configured
       if (this.tools && this.tools.length > 0) {

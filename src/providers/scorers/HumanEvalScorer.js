@@ -71,9 +71,12 @@ export class HumanEvalScorer extends ScorerProvider {
    * @private
    */
   async _runHumanEval(agentOutput, metadata) {
+    // Be tolerant to LLM formatting: try to sanitize common markdown wrappers
+    const sanitized = this._sanitizePythonCandidate(agentOutput, metadata.entryPoint);
+
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'humaneval-'));
     const scriptPath = path.join(tempDir, `runner-${randomUUID()}.py`);
-    const runnerSource = this._buildRunnerSource(agentOutput, metadata);
+    const runnerSource = this._buildRunnerSource(sanitized, metadata);
 
     try {
       await fs.promises.writeFile(scriptPath, runnerSource, 'utf8');
@@ -186,6 +189,69 @@ except Exception as runtime_error:
 emit(result)
 sys.exit(0)
 `;
+  }
+
+  /**
+   * Attempt to extract pure Python code from LLM output.
+   * - Extract the first fenced code block if present
+   * - Strip triple backticks and language tags
+   * - Drop anything before "# Your solution:" if present
+   * - Optionally trim any "if __name__ == '__main__'" usage examples
+   * This is best-effort and keeps original text if no obvious wrappers are found.
+   * @private
+   */
+  _sanitizePythonCandidate(text, entryPoint) {
+    if (typeof text !== 'string') return '';
+    let s = text.trim();
+
+    // If output contains a marker, keep text after it
+    const markerIdx = s.indexOf('# Your solution:');
+    if (markerIdx !== -1) {
+      s = s.slice(markerIdx + '# Your solution:'.length).trimStart();
+    }
+
+    // Extract fenced code block if present
+    const fenceRe = /```(?:python|py)?\s*([\s\S]*?)```/i;
+    const fenceMatch = s.match(fenceRe);
+    if (fenceMatch && fenceMatch[1]) {
+      s = fenceMatch[1].trim();
+    }
+
+    // Remove stray backticks lines
+    s = s.replace(/^```.*$/gm, '').trim();
+
+    // Strip common leading prose like "Here is the function" on its own line
+    s = s.replace(/^(?:Here is .*?:|Solution:|Answer:|Code:|Implementation:)[\s\S]*?\n+/i, '').trim();
+
+    // If entryPoint is known, try to discard anything before its definition
+    if (entryPoint && typeof entryPoint === 'string') {
+      const lit = `def ${entryPoint}`;
+      let idx = s.indexOf(lit);
+      if (idx < 0) {
+        const esc = entryPoint.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+        try {
+          const re = new RegExp(`(^|\\n)\\s*def\\s+${esc}\\s*\\(`, 'm');
+          const m = s.match(re);
+          if (m && m.index !== undefined) {
+            idx = m.index + (m[1] ? m[1].length : 0);
+          }
+        } catch (_) {
+          idx = -1;
+        }
+      }
+      if (idx >= 0) {
+        const before = s.slice(0, idx);
+        const hasCodeBefore = /\bdef\b/.test(before) || /\bclass\b/.test(before) || /\bimport\b/.test(before);
+        if (!hasCodeBefore) {
+          s = s.slice(idx);
+        }
+      }
+    }
+
+    // Remove typical main-guard snippets and prints/examples
+    s = s.replace(/if __name__ == ['\"]__main__['\"]:[\s\S]*$/m, '').trim();
+
+    return s;
   }
 
   /**
