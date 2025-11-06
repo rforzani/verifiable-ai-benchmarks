@@ -17,7 +17,7 @@ async function performTrustedSetup() {
   const subsetR1csPath = path.join(circuitsDir, 'verifier-subset.r1cs');
 
   // Shared Powers of Tau (can be reused across both circuits)
-  // Power 24 supports up to 2^24 = 16,777,216 constraints (our main circuit has ~6.4M)
+  // Power 24 supports up to 2^24 = 16,777,216 constraints
   const ptauRawPath = path.join(circuitsDir, 'powersOfTau28_hez_24.ptau');
   const ptauPath = path.join(circuitsDir, 'powersOfTau28_hez_final_24.ptau');
 
@@ -53,7 +53,7 @@ async function performTrustedSetup() {
 
       // Build curve and create a raw ptau (Phase 1)
       const curve = await snarkjs.curves.getCurveFromName('BN128');
-      const power = 24; // 2^24 = 16,777,216 constraints (main circuit has ~6.4M)
+      const power = 24; // 2^24 = 16,777,216 constraints
       await snarkjs.powersOfTau.newAccumulator(curve, power, ptauRawPath, console);
 
       // Prepare Phase 2 (required for groth16 setup)
